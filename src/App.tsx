@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
   ChevronRight,
   Clock3,
   Copy,
@@ -23,6 +24,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./App.css";
+import { remarkCjkStrongBoundaries } from "./markdown";
 
 type Action = "triage" | "translate";
 type Mode = "toolbar" | "card" | "history" | "settings" | "signin";
@@ -140,6 +142,11 @@ function App() {
 
   useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
   useEffect(() => { if (busy) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [streamText, busy]);
+  useEffect(() => {
+    const preventBrowserMenu = (event: globalThis.MouseEvent) => event.preventDefault();
+    window.addEventListener("contextmenu", preventBrowserMenu);
+    return () => window.removeEventListener("contextmenu", preventBrowserMenu);
+  }, []);
   useEffect(() => {
     const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") close(); };
     window.addEventListener("keydown", escape);
@@ -303,7 +310,7 @@ const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel
 });
 
 function MarkdownAnswer({ content, streaming = false }: { content: string; streaming?: boolean }) {
-  return <article className={`markdown-answer${streaming ? " is-streaming" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>{streaming && <span className="stream-caret" aria-hidden="true" />}</article>;
+  return <article className={`markdown-answer${streaming ? " is-streaming" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkStrongBoundaries]}>{content}</ReactMarkdown>{streaming && <span className="stream-caret" aria-hidden="true" />}</article>;
 }
 function LoadingState() { return <div className="loading-state" aria-label="Gloss is thinking"><div className="thinking-mark"><Sparkles size={18} /></div><div className="loading-lines"><i /><i /><i /></div></div>; }
 function SignInPanel({ onSignIn, error, notice }: { onSignIn: () => void; error: string | null; notice: string }) {
@@ -315,6 +322,106 @@ function HistoryPanel({ items, error, onOpen, onDelete }: { items: SessionSummar
 }
 
 type SettingsProps = { value: SettingsValue; auth: AuthStatus; error: string | null; onChange: (value: SettingsValue) => void; onSubmit: (event: FormEvent) => void; onSignIn: () => void; onSignOut: () => void };
+const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string }> = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+function ThemePicker({ value, onChange }: { value: Theme; onChange: (theme: Theme) => void }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(() => THEME_OPTIONS.findIndex((option) => option.value === value));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = Math.max(0, THEME_OPTIONS.findIndex((option) => option.value === value));
+  const selected = THEME_OPTIONS[selectedIndex];
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => optionRefs.current[activeIndex]?.focus());
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+    };
+  }, [open]);
+
+  function openPicker(index: number) {
+    setActiveIndex(index);
+    setOpen(true);
+  }
+  function closePicker(restoreFocus = false) {
+    setOpen(false);
+    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+  function choose(index: number) {
+    onChange(THEME_OPTIONS[index].value);
+    closePicker(true);
+  }
+  function moveTo(index: number) {
+    const nextIndex = (index + THEME_OPTIONS.length) % THEME_OPTIONS.length;
+    setActiveIndex(nextIndex);
+    optionRefs.current[nextIndex]?.focus();
+  }
+  function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      openPicker(event.key === "ArrowUp" ? THEME_OPTIONS.length - 1 : selectedIndex);
+    }
+  }
+  function handleOptionKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key === "ArrowDown") { event.preventDefault(); moveTo(index + 1); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); moveTo(index - 1); }
+    else if (event.key === "Home") { event.preventDefault(); moveTo(0); }
+    else if (event.key === "End") { event.preventDefault(); moveTo(THEME_OPTIONS.length - 1); }
+    else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(index); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closePicker(true); }
+    else if (event.key === "Tab") setOpen(false);
+  }
+
+  return <div className={`theme-picker${open ? " is-open" : ""}`} ref={rootRef} onBlur={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+  }}>
+    <button
+      id="theme"
+      className="theme-trigger"
+      type="button"
+      ref={triggerRef}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-controls={open ? "theme-options" : undefined}
+      aria-labelledby="theme-label theme-value"
+      aria-describedby="theme-help"
+      onClick={() => open ? closePicker() : openPicker(selectedIndex)}
+      onKeyDown={handleTriggerKeyDown}
+    >
+      <span id="theme-value">{selected.label}</span>
+      <ChevronDown size={14} aria-hidden="true" />
+    </button>
+    {open && <div id="theme-options" className="theme-options" role="listbox" aria-labelledby="theme-label">
+      {THEME_OPTIONS.map((option, index) => <button
+        className="theme-option"
+        type="button"
+        role="option"
+        aria-selected={value === option.value}
+        tabIndex={index === activeIndex ? 0 : -1}
+        ref={(element) => { optionRefs.current[index] = element; }}
+        key={option.value}
+        onClick={() => choose(index)}
+        onMouseMove={() => setActiveIndex(index)}
+        onKeyDown={(event) => handleOptionKeyDown(event, index)}
+      >
+        <span>{option.label}</span>
+        <Check size={14} aria-hidden="true" />
+      </button>)}
+    </div>}
+  </div>;
+}
+
 function SettingsPanel({ value, auth, error, onChange, onSubmit, onSignIn, onSignOut }: SettingsProps) {
   const proxyRef = useRef<HTMLInputElement>(null);
   const [proxyError, setProxyError] = useState("");
@@ -343,7 +450,7 @@ function SettingsPanel({ value, auth, error, onChange, onSubmit, onSignIn, onSig
   }
   return <form className="panel-scroll settings-panel" onSubmit={submit} noValidate>
     <section className="setting-group"><h2>Activation</h2><label className="setting-row stacked" htmlFor="shortcut"><span><strong>Global shortcut</strong><small>Select text, then press this shortcut.</small></span><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} aria-describedby="shortcut-help" /><small id="shortcut-help">Click the field and press your new combination.</small></label></section>
-    <section className="setting-group"><h2>Appearance & data</h2><label className="setting-row" htmlFor="theme"><span><strong>Theme</strong><small>Match Windows or choose one.</small></span><select id="theme" value={value.theme} onChange={(event) => onChange({ ...value, theme: event.target.value as Theme })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label className="setting-row" htmlFor="history-toggle"><span><strong>Save history</strong><small>Store complete sessions as local JSONL.</small></span><input id="history-toggle" className="switch" type="checkbox" checked={value.saveHistory} onChange={(event) => onChange({ ...value, saveHistory: event.target.checked })} /></label></section>
+    <section className="setting-group"><h2>Appearance & data</h2><div className="setting-row theme-setting-row"><span><strong id="theme-label">Theme</strong><small id="theme-help">Match Windows or choose one.</small></span><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div><label className="setting-row" htmlFor="history-toggle"><span><strong>Save history</strong><small>Store complete sessions as local JSONL.</small></span><input id="history-toggle" className="switch" type="checkbox" checked={value.saveHistory} onChange={(event) => onChange({ ...value, saveHistory: event.target.checked })} /></label></section>
     <section className="setting-group"><h2>Network</h2><label className="setting-row stacked" htmlFor="proxy-url"><span><strong>Proxy</strong><small>Optional. Used for OAuth token exchange and all AI requests.</small></span><input ref={proxyRef} id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={`proxy-help${proxyError ? " proxy-error" : ""}`} /><small id="proxy-help">HTTP, HTTPS, SOCKS5, and SOCKS5H are supported.</small>{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label></section>
     <section className="setting-group"><h2>ChatGPT</h2><div className="setting-row"><span><strong>{auth.status === "connected" ? "Connected" : auth.status === "error" ? "Connection failed" : "Not connected"}</strong><small>OAuth credentials are stored locally in plaintext.</small></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div></section>
     {error && <p className="panel-error">{error}</p>}<button className="primary-button wide save-button" type="submit">Save settings</button>
