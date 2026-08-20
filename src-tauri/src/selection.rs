@@ -1,20 +1,34 @@
 use serde::Serialize;
-use std::{ffi::c_void, ptr, slice};
+use std::{ffi::c_void, mem::size_of, ptr, slice, thread, time::Duration};
 use uiautomation::{
     UIAutomation, UIElement,
     patterns::{UITextPattern, UITextRange},
-    types::Point as UiPoint,
+    types::{Point as UiPoint, TreeScope, UIProperty},
+    variants::Variant,
 };
 use windows::Win32::{
-    Foundation::POINT,
+    Foundation::{HGLOBAL, HWND, POINT},
     System::{
-        Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize, SAFEARRAY},
+        Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize, IDataObject, SAFEARRAY},
+        DataExchange::{
+            CloseClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
+        },
+        Memory::{GlobalLock, GlobalSize, GlobalUnlock},
         Ole::{
-            SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetLBound,
-            SafeArrayGetUBound, SafeArrayUnaccessData,
+            CF_UNICODETEXT, OleFlushClipboard, OleGetClipboard, OleInitialize, OleSetClipboard,
+            OleUninitialize, SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetDim,
+            SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayUnaccessData,
         },
     },
-    UI::{Accessibility::IUIAutomationTextRange, WindowsAndMessaging::GetCursorPos},
+    UI::{
+        Accessibility::IUIAutomationTextRange,
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+            KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_INSERT, VK_LWIN, VK_MENU,
+            VK_RWIN, VK_SHIFT,
+        },
+        WindowsAndMessaging::{GetCursorPos, GetForegroundWindow},
+    },
 };
 
 const MAX_ANCESTOR_DEPTH: usize = 64;
@@ -54,6 +68,51 @@ impl Drop for ComGuard {
     }
 }
 
+struct OleGuard;
+
+impl Drop for OleGuard {
+    fn drop(&mut self) {
+        // SAFETY: this balances the successful OleInitialize call on this thread.
+        unsafe { OleUninitialize() };
+    }
+}
+
+struct ClipboardOpenGuard;
+
+impl Drop for ClipboardOpenGuard {
+    fn drop(&mut self) {
+        // SAFETY: this balances the successful OpenClipboard call on this thread.
+        let _ = unsafe { CloseClipboard() };
+    }
+}
+
+struct ClipboardRestoreGuard {
+    snapshot: Option<IDataObject>,
+}
+
+impl ClipboardRestoreGuard {
+    fn new(snapshot: IDataObject) -> Self {
+        Self {
+            snapshot: Some(snapshot),
+        }
+    }
+
+    fn restore(&mut self) -> Result<(), String> {
+        let Some(snapshot) = self.snapshot.take() else {
+            return Ok(());
+        };
+        retry_clipboard_operation(|| unsafe { OleSetClipboard(&snapshot) })
+            .and_then(|_| retry_clipboard_operation(|| unsafe { OleFlushClipboard() }))
+            .map_err(|error| format!("Could not restore the clipboard: {error}"))
+    }
+}
+
+impl Drop for ClipboardRestoreGuard {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
 struct SafeArrayGuard(*mut SAFEARRAY);
 
 impl Drop for SafeArrayGuard {
@@ -77,6 +136,20 @@ impl Drop for SafeArrayAccessGuard {
 }
 
 pub fn capture_selected_text() -> Result<SelectionCapture, String> {
+    let target = unsafe { GetForegroundWindow() };
+    if target.0.is_null() {
+        return Err("Couldn't find the app containing the selection.".to_owned());
+    }
+
+    if let Ok(Some(selection)) = capture_with_uia(target) {
+        return Ok(selection);
+    }
+
+    capture_with_copy_shortcut(target)?
+        .ok_or_else(|| "Couldn't read the selected text in this app.".to_owned())
+}
+
+fn capture_with_uia(target: HWND) -> Result<Option<SelectionCapture>, String> {
     // SAFETY: the blocking worker owns this COM initialization until this function returns.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
         .ok()
@@ -89,20 +162,23 @@ pub fn capture_selected_text() -> Result<SelectionCapture, String> {
         .get_raw_view_walker()
         .map_err(|error| format!("Could not inspect the accessibility tree: {error}"))?;
 
-    let focused = automation
-        .get_focused_element()
-        .map_err(|error| format!("Could not inspect the focused control: {error}"))?;
-    if let Some(capture) = capture_from_ancestor_chain(focused, &walker)? {
-        return Ok(capture);
+    if let Ok(focused) = automation.get_focused_element()
+        && let Some(capture) = capture_from_ancestor_chain(focused, &walker)?
+    {
+        return Ok(Some(capture));
+    }
+
+    if let Some(capture) = capture_from_window_subtree(&automation, target)? {
+        return Ok(Some(capture));
     }
 
     if let Some(element) = element_at_cursor(&automation)
         && let Some(capture) = capture_from_ancestor_chain(element, &walker)?
     {
-        return Ok(capture);
+        return Ok(Some(capture));
     }
 
-    Err("Couldn't read the selected text in this app.".to_owned())
+    Ok(None)
 }
 
 fn capture_from_ancestor_chain(
@@ -131,6 +207,150 @@ fn element_at_cursor(automation: &UIAutomation) -> Option<UIElement> {
     automation
         .element_from_point(UiPoint::new(point.x, point.y))
         .ok()
+}
+
+fn capture_from_window_subtree(
+    automation: &UIAutomation,
+    target: HWND,
+) -> Result<Option<SelectionCapture>, String> {
+    let root = match automation.element_from_handle(target.into()) {
+        Ok(root) => root,
+        Err(_) => return Ok(None),
+    };
+    let condition = automation
+        .create_property_condition(
+            UIProperty::IsTextPatternAvailable,
+            Variant::from(true),
+            None,
+        )
+        .map_err(|error| format!("Could not search the foreground app for text: {error}"))?;
+    let providers = match root.find_all(TreeScope::Subtree, &condition) {
+        Ok(providers) => providers,
+        Err(_) => return Ok(None),
+    };
+    for provider in providers {
+        if let Some(capture) = capture_from_element(&provider)? {
+            return Ok(Some(capture));
+        }
+    }
+    Ok(None)
+}
+
+fn capture_with_copy_shortcut(target: HWND) -> Result<Option<SelectionCapture>, String> {
+    // OLE clipboard operations require their own single-threaded apartment. The UIA MTA
+    // above has already been released before this fallback starts.
+    unsafe { OleInitialize(None) }
+        .map_err(|error| format!("Could not initialize clipboard capture: {error}"))?;
+    let _ole = OleGuard;
+    let snapshot = retry_clipboard_operation(|| unsafe { OleGetClipboard() })
+        .map_err(|error| format!("Could not preserve the clipboard: {error}"))?;
+    let mut restore = ClipboardRestoreGuard::new(snapshot);
+    let sequence = unsafe { GetClipboardSequenceNumber() };
+
+    if unsafe { GetForegroundWindow() } != target {
+        restore.restore()?;
+        return Ok(None);
+    }
+    send_ctrl_insert()?;
+
+    let mut text = None;
+    for _ in 0..20 {
+        thread::sleep(Duration::from_millis(20));
+        if unsafe { GetClipboardSequenceNumber() } != sequence {
+            text = clipboard_text();
+            break;
+        }
+    }
+    restore.restore()?;
+
+    Ok(text
+        .filter(|value| !value.trim().is_empty())
+        .map(|text| SelectionCapture { text, anchor: None }))
+}
+
+fn send_ctrl_insert() -> Result<(), String> {
+    let mut inputs = Vec::with_capacity(8);
+    inputs.push(key_input(VK_CONTROL, false));
+    for modifier in [VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN] {
+        if unsafe { GetAsyncKeyState(i32::from(modifier.0)) } < 0 {
+            inputs.push(key_input(modifier, true));
+        }
+    }
+    inputs.push(key_input(VK_INSERT, false));
+    inputs.push(key_input(VK_INSERT, true));
+    inputs.push(key_input(VK_CONTROL, true));
+
+    let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+    if sent == inputs.len() as u32 {
+        Ok(())
+    } else {
+        Err("Windows blocked the fallback copy shortcut.".to_owned())
+    }
+}
+
+fn key_input(key: VIRTUAL_KEY, released: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: 0,
+                dwFlags: if released {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn clipboard_text() -> Option<String> {
+    let _clipboard = open_clipboard()?;
+    let handle = unsafe { GetClipboardData(CF_UNICODETEXT.0.into()) }.ok()?;
+    let global = HGLOBAL(handle.0);
+    let byte_len = unsafe { GlobalSize(global) };
+    if byte_len < size_of::<u16>() {
+        return None;
+    }
+    let data = unsafe { GlobalLock(global) };
+    if data.is_null() {
+        return None;
+    }
+    let units = unsafe { slice::from_raw_parts(data.cast::<u16>(), byte_len / size_of::<u16>()) };
+    let end = units
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(units.len());
+    let text = String::from_utf16_lossy(&units[..end]);
+    let _ = unsafe { GlobalUnlock(global) };
+    Some(text)
+}
+
+fn open_clipboard() -> Option<ClipboardOpenGuard> {
+    for _ in 0..8 {
+        if unsafe { OpenClipboard(None) }.is_ok() {
+            return Some(ClipboardOpenGuard);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+fn retry_clipboard_operation<T>(
+    mut operation: impl FnMut() -> windows::core::Result<T>,
+) -> windows::core::Result<T> {
+    let mut last_error = None;
+    for _ in 0..8 {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = Some(error),
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(last_error.unwrap_or_else(windows::core::Error::from_thread))
 }
 
 fn capture_from_element(element: &UIElement) -> Result<Option<SelectionCapture>, String> {
@@ -228,5 +448,16 @@ mod tests {
         };
         assert_eq!(rect.center_x(), 30.0);
         assert_eq!(rect.bottom(), 32.0);
+    }
+
+    #[test]
+    fn key_input_marks_only_release_events() {
+        let pressed = key_input(VK_INSERT, false);
+        let released = key_input(VK_INSERT, true);
+        assert_eq!(
+            unsafe { pressed.Anonymous.ki.dwFlags },
+            KEYBD_EVENT_FLAGS(0)
+        );
+        assert_eq!(unsafe { released.Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
     }
 }

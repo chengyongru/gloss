@@ -434,7 +434,7 @@ function MarkdownAnswer({ content, streaming = false }: { content: string; strea
 }
 function LoadingState() { return <div className="loading-state" aria-label="Gloss is thinking"><div className="thinking-mark"><Sparkles size={18} /></div><div className="loading-lines"><i /><i /><i /></div></div>; }
 function SignInPanel({ onSignIn, error, notice }: { onSignIn: () => void; error: string | null; notice: string }) {
-  return <div className="center-panel"><div className="connect-mark"><LogIn size={24} /></div><h1>Connect ChatGPT</h1><p>Gloss uses your ChatGPT Codex access. Your sign-in is stored locally as plaintext in Gloss app data.</p><button className="primary-button wide" onClick={onSignIn}>Continue with ChatGPT <ChevronRight size={17} /></button>{(error || notice) && <p className={error ? "panel-error" : "panel-notice"}>{error || notice}</p>}<small>No API key, clipboard capture, or cloud sync.</small></div>;
+  return <div className="center-panel"><div className="connect-mark"><LogIn size={24} /></div><h1>Connect ChatGPT</h1><p>Gloss uses your ChatGPT Codex access. Your sign-in is stored locally as plaintext in Gloss app data.</p><button className="primary-button wide" onClick={onSignIn}>Continue with ChatGPT <ChevronRight size={17} /></button>{(error || notice) && <p className={error ? "panel-error" : "panel-notice"}>{error || notice}</p>}<small>Your selected text is sent only when you invoke Gloss.</small></div>;
 }
 
 function HistoryPanel({ items, error, onOpen, onDelete }: { items: SessionSummary[]; error: string | null; onOpen: (id: string) => void; onDelete: (event: MouseEvent, id: string) => void }) {

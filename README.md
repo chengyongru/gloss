@@ -62,7 +62,7 @@ Triage 完成后，窗口底部会出现输入框。你可以继续询问句子�
 
 ### 提示 “No readable selection”
 
-当前应用可能没有通过 Windows UI Automation 暴露文本选区。请确认文本仍处于选中状态，或尝试在其他浏览器、编辑器中使用。
+请确认文本仍处于选中状态。Gloss 会自动兼容 Windows UI Automation 与应用自身的复制语义。
 
 ### 按快捷键没有反应
 
