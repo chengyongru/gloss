@@ -95,8 +95,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .header-title span { margin-top: 1px; color: var(--text-faint); font-size: 10.5px; }
 .brand-glyph { width: 30px; height: 30px; border-radius: 10px; background: var(--text); color: var(--surface-solid) !important; display: grid; place-items: center; font: 600 16px/1 Georgia, serif; }
 .header-actions { gap: 2px; }
-.drag-grip { margin-inline: 3px; color: var(--text-faint); }
-
 .result-scroll, .panel-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 .result-scroll { padding: 18px 24px 22px; scroll-behavior: smooth; }
 .source-quote { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 4px 13px 13px 4px; background: var(--surface-muted); }

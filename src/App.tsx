@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Clock3,
   Copy,
-  Grip,
   Languages,
   LogIn,
   LogOut,
@@ -281,7 +280,6 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
       </div>
       <div className="header-actions">
         {mode === "card" && <><button className="icon-button" aria-label="Open history" onClick={onHistory} title="History"><Clock3 size={17} /></button><button className="icon-button" aria-label="Open settings" onClick={onSettings} title="Settings"><Settings size={17} /></button></>}
-        <Grip className="drag-grip" size={16} aria-hidden="true" data-tauri-drag-region />
         <button className="icon-button" aria-label="Close Gloss" onClick={onClose}><X size={17} /></button>
       </div>
     </header>
