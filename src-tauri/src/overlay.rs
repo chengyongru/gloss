@@ -12,7 +12,7 @@ use windows::Win32::{
 };
 
 const TOOLBAR_WIDTH: f64 = 440.0;
-const TOOLBAR_HEIGHT: f64 = 72.0;
+const TOOLBAR_HEIGHT: f64 = 60.0;
 const CARD_WIDTH: f64 = 440.0;
 const CARD_HEIGHT: f64 = 540.0;
 const EDGE_GAP: f64 = 12.0;
