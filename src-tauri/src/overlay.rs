@@ -43,9 +43,6 @@ pub fn handle_global_shortcut(app: &AppHandle) {
 }
 
 pub fn show_toolbar(app: &AppHandle, anchor: Option<SelectionRect>) -> Result<(), String> {
-    if let Some(state) = app.try_state::<AppState>() {
-        state.prepare_overlay_focus();
-    }
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?;
@@ -188,9 +185,6 @@ pub fn expand_to_card(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn hide(app: &AppHandle) -> Result<(), String> {
-    if let Some(state) = app.try_state::<AppState>() {
-        state.prepare_overlay_focus();
-    }
     app.get_webview_window("main")
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?
         .hide()

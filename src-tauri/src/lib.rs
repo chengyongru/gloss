@@ -31,9 +31,6 @@ fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(state) = app.try_state::<AppState>() {
-        state.prepare_overlay_focus();
-    }
     overlay::expand_to_card(&app)?;
     let window = app
         .get_webview_window("main")
@@ -112,21 +109,11 @@ pub fn run() {
             settings::get_settings,
             settings::update_settings,
         ])
-        .on_window_event(|window, event| match event {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            tauri::WindowEvent::Focused(focused) => {
-                let state = window.state::<AppState>();
-                if *focused {
-                    state.mark_overlay_focused();
-                } else if state.should_dismiss_on_blur() {
-                    let _ = window.hide();
-                    state.prepare_overlay_focus();
-                }
-            }
-            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running Gloss");

@@ -1,14 +1,7 @@
 use crate::selection::SelectionCapture;
 use crate::sessions::ConversationSession;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
 pub const DEFAULT_SHORTCUT: &str = "ctrl+alt+shift+t";
 
@@ -62,7 +55,6 @@ pub struct AppState {
     pub active_session_id: Mutex<Option<String>>,
     pub auth_lock: tokio::sync::Mutex<()>,
     pub profile_lock: tokio::sync::Mutex<()>,
-    dismiss_on_blur: AtomicBool,
 }
 
 impl Default for AppState {
@@ -75,7 +67,6 @@ impl Default for AppState {
             active_session_id: Mutex::new(None),
             auth_lock: tokio::sync::Mutex::new(()),
             profile_lock: tokio::sync::Mutex::new(()),
-            dismiss_on_blur: AtomicBool::new(false),
         }
     }
 }
@@ -110,17 +101,5 @@ impl AppState {
             .map_err(|_| "The data directory state is unavailable.".to_owned())?
             .clone()
             .ok_or_else(|| "The Gloss data directory is not ready.".to_owned())
-    }
-
-    pub fn prepare_overlay_focus(&self) {
-        self.dismiss_on_blur.store(false, Ordering::SeqCst);
-    }
-
-    pub fn mark_overlay_focused(&self) {
-        self.dismiss_on_blur.store(true, Ordering::SeqCst);
-    }
-
-    pub fn should_dismiss_on_blur(&self) -> bool {
-        self.dismiss_on_blur.load(Ordering::SeqCst)
     }
 }
