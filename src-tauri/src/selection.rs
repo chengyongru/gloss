@@ -3,8 +3,10 @@ use std::{ffi::c_void, ptr, slice};
 use uiautomation::{
     UIAutomation, UIElement,
     patterns::{UITextPattern, UITextRange},
+    types::Point as UiPoint,
 };
 use windows::Win32::{
+    Foundation::POINT,
     System::{
         Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize, SAFEARRAY},
         Ole::{
@@ -12,10 +14,10 @@ use windows::Win32::{
             SafeArrayGetUBound, SafeArrayUnaccessData,
         },
     },
-    UI::Accessibility::IUIAutomationTextRange,
+    UI::{Accessibility::IUIAutomationTextRange, WindowsAndMessaging::GetCursorPos},
 };
 
-const MAX_PARENT_DEPTH: usize = 8;
+const MAX_ANCESTOR_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,19 +85,36 @@ pub fn capture_selected_text() -> Result<SelectionCapture, String> {
 
     let automation = UIAutomation::new_direct()
         .map_err(|error| format!("Could not start Windows UI Automation: {error}"))?;
-    let focused = automation
-        .get_focused_element()
-        .map_err(|error| format!("Could not inspect the focused control: {error}"))?;
     let walker = automation
         .get_raw_view_walker()
         .map_err(|error| format!("Could not inspect the accessibility tree: {error}"))?;
 
-    let mut element = focused;
-    for depth in 0..=MAX_PARENT_DEPTH {
+    let focused = automation
+        .get_focused_element()
+        .map_err(|error| format!("Could not inspect the focused control: {error}"))?;
+    if let Some(capture) = capture_from_ancestor_chain(focused, &walker)? {
+        return Ok(capture);
+    }
+
+    if let Some(element) = element_at_cursor(&automation)
+        && let Some(capture) = capture_from_ancestor_chain(element, &walker)?
+    {
+        return Ok(capture);
+    }
+
+    Err("Couldn't read the selected text in this app.".to_owned())
+}
+
+fn capture_from_ancestor_chain(
+    mut element: UIElement,
+    walker: &uiautomation::UITreeWalker,
+) -> Result<Option<SelectionCapture>, String> {
+    let mut best = None;
+    for depth in 0..=MAX_ANCESTOR_DEPTH {
         if let Some(capture) = capture_from_element(&element)? {
-            return Ok(capture);
+            best = Some(capture);
         }
-        if depth == MAX_PARENT_DEPTH {
+        if depth == MAX_ANCESTOR_DEPTH {
             break;
         }
         element = match walker.get_parent(&element) {
@@ -103,8 +122,15 @@ pub fn capture_selected_text() -> Result<SelectionCapture, String> {
             Err(_) => break,
         };
     }
+    Ok(best)
+}
 
-    Err("Couldn't read the selected text in this app.".to_owned())
+fn element_at_cursor(automation: &UIAutomation) -> Option<UIElement> {
+    let mut point = POINT::default();
+    unsafe { GetCursorPos(&mut point) }.ok()?;
+    automation
+        .element_from_point(UiPoint::new(point.x, point.y))
+        .ok()
 }
 
 fn capture_from_element(element: &UIElement) -> Result<Option<SelectionCapture>, String> {
