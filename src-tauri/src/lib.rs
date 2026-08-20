@@ -29,7 +29,7 @@ fn collapse_overlay(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     match state.overlay_snapshot()? {
         OverlayState::Ready { selection } => overlay::show_toolbar(&app, selection.anchor),
         OverlayState::CaptureError { .. } => overlay::show_toolbar(&app, None),
-        OverlayState::Idle => overlay::hide(&app),
+        OverlayState::Idle => overlay::show_toolbar(&app, None),
     }
 }
 

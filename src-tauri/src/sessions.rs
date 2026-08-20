@@ -554,14 +554,21 @@ fn wide_path(path: &Path) -> Vec<u16> {
 }
 
 fn compact_preview(text: &str) -> String {
+    const MAX_DISPLAY_WIDTH: usize = 44;
+
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = one_line.chars();
-    let preview = chars.by_ref().take(100).collect::<String>();
-    if chars.next().is_some() {
-        format!("{preview}…")
-    } else {
-        preview
+    let mut preview = String::new();
+    let mut display_width = 0;
+    for character in one_line.chars() {
+        let character_width = if character.is_ascii() { 1 } else { 2 };
+        if display_width + character_width > MAX_DISPLAY_WIDTH {
+            preview.push('…');
+            break;
+        }
+        preview.push(character);
+        display_width += character_width;
     }
+    preview
 }
 
 #[cfg(test)]
@@ -592,10 +599,12 @@ mod tests {
     }
 
     #[test]
-    fn preview_is_bounded_by_unicode_characters() {
-        let preview = compact_preview(&"学".repeat(110));
-        assert_eq!(preview.chars().count(), 101);
-        assert!(preview.ends_with('…'));
+    fn preview_is_bounded_by_display_width() {
+        let preview = compact_preview(&"学".repeat(30));
+        assert_eq!(preview, format!("{}…", "学".repeat(22)));
+
+        let mixed = compact_preview(&format!("{}{}", "a".repeat(40), "学".repeat(3)));
+        assert_eq!(mixed, format!("{}学学…", "a".repeat(40)));
     }
 
     #[test]

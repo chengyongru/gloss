@@ -36,6 +36,7 @@ type Message = { id: string; turnId: string; role: "user" | "assistant"; content
 type Session = { sessionId: string; action: Action; selectedText: string; messages: Message[] };
 type SessionSummary = { sessionId: string; action: Action; preview: string; updatedAt: string };
 type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string };
+type SettingsSaveState = { status: "idle" | "saving" | "saved" } | { status: "error"; message: string };
 type AuthStatus = { status: "signed_out" } | { status: "connected"; expiresAtMs: number } | { status: "error"; message: string };
 type AgentEvent =
   | { type: "started"; sessionId: string; attemptId: string }
@@ -68,10 +69,12 @@ function App() {
   const [history, setHistory] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<SettingsValue>(DEFAULT_SETTINGS);
   const [draftSettings, setDraftSettings] = useState<SettingsValue>(DEFAULT_SETTINGS);
+  const [settingsSaveState, setSettingsSaveState] = useState<SettingsSaveState>({ status: "idle" });
   const [question, setQuestion] = useState("");
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const settingsSaveGeneration = useRef(0);
 
   const visibleMessages = useMemo(() => session?.messages.filter((_, index) => index > 0) ?? [], [session]);
   const lastAnswer = [...visibleMessages].reverse().find((message) => message.role === "assistant")?.content;
@@ -129,6 +132,7 @@ function App() {
           setSettings(value);
           setDraftSettings(value);
         }).catch(() => undefined);
+        setSettingsSaveState({ status: "idle" });
         setError(null);
         setMode("settings");
       }),
@@ -145,6 +149,34 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = mode === "settings" ? draftSettings.theme : settings.theme;
   }, [draftSettings.theme, mode, settings.theme]);
+  useEffect(() => {
+    const generation = ++settingsSaveGeneration.current;
+    if (settingsEqual(draftSettings, settings)) return;
+    const requested = { ...draftSettings };
+    const delay = requested.proxyUrl !== settings.proxyUrl ? 450 : 0;
+    const timer = window.setTimeout(() => {
+      const proxyError = validateProxy(requested.proxyUrl);
+      if (proxyError) {
+        if (generation === settingsSaveGeneration.current) setSettingsSaveState({ status: "error", message: proxyError });
+        return;
+      }
+      setSettingsSaveState({ status: "saving" });
+      if (!isTauri) {
+        setSettings(requested);
+        setSettingsSaveState({ status: "saved" });
+        return;
+      }
+      invoke<SettingsValue>("update_settings", { settings: requested }).then((saved) => {
+        if (generation !== settingsSaveGeneration.current) return;
+        setSettings(saved);
+        setDraftSettings((current) => settingsEqual(current, requested) ? saved : current);
+        setSettingsSaveState({ status: "saved" });
+      }).catch((cause) => {
+        if (generation === settingsSaveGeneration.current) setSettingsSaveState({ status: "error", message: errorMessage(cause) });
+      });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [draftSettings, settings]);
   useEffect(() => { if (busy) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [streamText, busy]);
   useEffect(() => {
     const preventBrowserMenu = (event: globalThis.MouseEvent) => event.preventDefault();
@@ -209,6 +241,7 @@ function App() {
 
   async function showHistory() {
     setMode("history"); setError(null);
+    if (isTauri) await invoke("expand_overlay").catch((cause) => setError(errorMessage(cause)));
     try { setHistory(await invoke<SessionSummary[]>("list_history")); }
     catch (cause) { setError(errorMessage(cause)); }
   }
@@ -226,33 +259,18 @@ function App() {
     catch (cause) { setError(errorMessage(cause)); }
   }
 
-  function showSettings() { setDraftSettings(settings); setError(null); setMode("settings"); }
+  function showSettings() { setDraftSettings(settings); setSettingsSaveState({ status: "idle" }); setError(null); setMode("settings"); }
   async function showSettingsFromToolbar() {
     setDraftSettings(settings);
+    setSettingsSaveState({ status: "idle" });
     setError(null);
     setMode("settings");
     if (isTauri) await invoke("show_settings").catch((cause) => setError(errorMessage(cause)));
   }
-  async function saveSettings(event: FormEvent) {
-    event.preventDefault();
-    try {
-      const value = await invoke<SettingsValue>("update_settings", { settings: draftSettings });
-      setSettings(value); setDraftSettings(value); setNotice("Settings saved");
-      await leavePanel();
-    } catch (cause) { setError(errorMessage(cause)); }
-  }
 
-  async function leavePanel() {
-    if (session) {
-      setMode("card");
-      return;
-    }
-    if (selection || captureError) {
-      setMode("toolbar");
-      if (isTauri) await invoke("collapse_overlay").catch((cause) => setError(errorMessage(cause)));
-      return;
-    }
-    close();
+  async function returnToToolbar() {
+    setMode("toolbar");
+    if (isTauri) await invoke("collapse_overlay").catch((cause) => setError(errorMessage(cause)));
   }
 
   async function copyAnswer() {
@@ -266,13 +284,13 @@ function App() {
   return (
     <main className={`shell ${mode === "toolbar" ? "is-toolbar" : "is-card"}`} aria-label="Gloss">
       {mode === "toolbar" ? (
-        <Toolbar selection={selection} error={captureError} onAction={runAction} onSettings={showSettingsFromToolbar} onClose={close} />
+        <Toolbar selection={selection} error={captureError} onAction={runAction} onHistory={showHistory} onSettings={showSettingsFromToolbar} onClose={close} />
       ) : (
-        <section className="card" aria-label="Gloss reading companion">
-          <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={mode === "settings" ? showHistory : leavePanel} onHistory={showHistory} onSettings={showSettings} onClose={close} />
+        <section className={`card mode-${mode}`} aria-label="Gloss reading companion">
+          <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={returnToToolbar} onHistory={showHistory} onSettings={showSettings} onClose={close} />
           {mode === "signin" && <SignInPanel onSignIn={signIn} error={error} notice={notice} />}
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
-          {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} onChange={setDraftSettings} onSubmit={saveSettings} onSignIn={signIn} onSignOut={signOut} />}
+          {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} saveState={settingsSaveState} onChange={setDraftSettings} onSignIn={signIn} onSignOut={signOut} />}
           {mode === "card" && <ResultPanel ref={scrollRef} session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onRetry={retry} onCopy={copyAnswer} />}
           <div className="sr-status" role="status" aria-live="polite">{notice || (busy ? "Gloss is thinking" : error ?? "")}</div>
         </section>
@@ -281,7 +299,7 @@ function App() {
   );
 }
 
-function Toolbar({ selection, error, onAction, onSettings, onClose }: { selection: Selection | null; error: string | null; onAction: (action: Action) => void; onSettings: () => void; onClose: () => void }) {
+function Toolbar({ selection, error, onAction, onHistory, onSettings, onClose }: { selection: Selection | null; error: string | null; onAction: (action: Action) => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
   function startToolbarDrag(event: MouseEvent<HTMLElement>) {
     if (!isTauri || event.button !== 0) return;
     const target = event.target as Element;
@@ -292,7 +310,7 @@ function Toolbar({ selection, error, onAction, onSettings, onClose }: { selectio
 
   return (
     <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
-      <div className="toolbar-mark" aria-hidden="true"><img src={glossLogo} alt="" /></div>
+      <button className="toolbar-mark" aria-label="Open history" title="History" onClick={onHistory}><img src={glossLogo} alt="" /></button>
       <p className={error ? "toolbar-error" : "selection-peek"} title={error ?? selection?.text}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
       <div className="toolbar-actions">
         <button className="action-button primary" onClick={() => onAction("triage")} disabled={!selection}><MessageCircleQuestion size={16} /><span>Triage</span></button>
@@ -310,7 +328,7 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
     <header className="card-header" data-tauri-drag-region>
       <div className="header-title">
         {mode === "history" || mode === "settings" ? <button className="icon-button" aria-label="Back" onClick={onBack}><ArrowLeft size={17} /></button> : <span className="brand-glyph" aria-hidden="true"><img src={glossLogo} alt="" /></span>}
-        <div><strong>{title}</strong>{mode !== "card" && <span>Gloss</span>}</div>
+        <div><strong>{title}</strong>{mode !== "card" && mode !== "settings" && <span>Gloss</span>}</div>
       </div>
       <div className="header-actions">
         {mode === "card" && <><button className="icon-button" aria-label="Open history" onClick={onHistory} title="History"><Clock3 size={17} /></button><button className="icon-button" aria-label="Open settings" onClick={onSettings} title="Settings"><Settings size={17} /></button></>}
@@ -423,7 +441,7 @@ function HistoryPanel({ items, error, onOpen, onDelete }: { items: SessionSummar
   return <div className="panel-scroll history-panel"><p className="panel-intro">Your reading sessions stay on this PC.</p>{error && <p className="panel-error">{error}</p>}{!error && items.length === 0 && <div className="empty-state"><Clock3 size={22} /><strong>No history yet</strong><p>Your first Triage or Translate session will appear here.</p></div>}<div className="history-list">{items.map((item) => <div className="history-item" key={item.sessionId}><button className="history-open" onClick={() => onOpen(item.sessionId)}><span className={`history-icon ${item.action}`}>{item.action === "triage" ? <MessageCircleQuestion size={16} /> : <Languages size={16} />}</span><span className="history-copy"><strong>{item.preview}</strong><small>{formatTime(item.updatedAt)} · {capitalize(item.action)}</small></span></button><button className="history-delete" aria-label="Delete history item" onClick={(event) => onDelete(event, item.sessionId)}><Trash2 size={15} /></button></div>)}</div></div>;
 }
 
-type SettingsProps = { value: SettingsValue; auth: AuthStatus; error: string | null; onChange: (value: SettingsValue) => void; onSubmit: (event: FormEvent) => void; onSignIn: () => void; onSignOut: () => void };
+type SettingsProps = { value: SettingsValue; auth: AuthStatus; error: string | null; saveState: SettingsSaveState; onChange: (value: SettingsValue) => void; onSignIn: () => void; onSignOut: () => void };
 const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string }> = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
@@ -523,10 +541,7 @@ function ThemePicker({ value, onChange }: { value: Theme; onChange: (theme: Them
   </div>;
 }
 
-function SettingsPanel({ value, auth, error, onChange, onSubmit, onSignIn, onSignOut }: SettingsProps) {
-  const proxyRef = useRef<HTMLInputElement>(null);
-  const [proxyError, setProxyError] = useState("");
-
+function SettingsPanel({ value, auth, error, saveState, onChange, onSignIn, onSignOut }: SettingsProps) {
   function recordShortcut(event: KeyboardEvent<HTMLInputElement>) {
     event.preventDefault();
     if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
@@ -534,31 +549,25 @@ function SettingsPanel({ value, auth, error, onChange, onSubmit, onSignIn, onSig
     const key = normalizeKey(event.key);
     if (modifiers.length && key) onChange({ ...value, shortcut: [...modifiers, key].join("+") });
   }
-  function submit(event: FormEvent) {
-    const message = validateProxy(value.proxyUrl);
-    if (message) {
-      event.preventDefault();
-      setProxyError(message);
-      proxyRef.current?.focus();
-      return;
-    }
-    setProxyError("");
-    onSubmit(event);
-  }
   function updateProxy(proxyUrl: string) {
-    if (proxyError) setProxyError("");
     onChange({ ...value, proxyUrl });
   }
-  return <form className="panel-scroll settings-panel" onSubmit={submit} noValidate>
-    <section className="setting-group"><h2>Activation</h2><label className="setting-row stacked" htmlFor="shortcut"><span><strong>Global shortcut</strong></span><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} /></label></section>
-    <section className="setting-group"><h2>Appearance</h2><div className="setting-row theme-setting-row"><span><strong id="theme-label">Theme</strong></span><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div></section>
-    <section className="setting-group"><h2>Network</h2><label className="setting-row stacked" htmlFor="proxy-url"><span><strong>Proxy</strong></span><input ref={proxyRef} id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label></section>
-    <section className="setting-group"><h2>ChatGPT</h2><div className="setting-row"><span><strong>{auth.status === "connected" ? "Connected" : auth.status === "error" ? "Connection failed" : "Not connected"}</strong></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div></section>
-    {error && <p className="panel-error">{error}</p>}<button className="primary-button wide save-button" type="submit">Save settings</button>
-  </form>;
+  const connectionLabel = auth.status === "connected" ? "Connected" : auth.status === "error" ? "Connection failed" : "Not connected";
+  const proxyError = saveState.status === "error" ? validateProxy(value.proxyUrl) : "";
+  return <div className="panel-scroll settings-panel">
+    <div className="settings-fields">
+      <label className="setting-field" htmlFor="shortcut"><strong className="setting-label">Global shortcut</strong><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} /></label>
+      <div className="setting-field setting-field-inline theme-setting-row"><strong className="setting-label" id="theme-label">Theme</strong><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div>
+      <label className="setting-field" htmlFor="proxy-url"><strong className="setting-label">Proxy</strong><input id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label>
+      <div className="setting-field setting-field-inline account-setting"><span className="account-copy"><strong className="setting-label">ChatGPT</strong><span className={`connection-status is-${auth.status}`}><i aria-hidden="true" />{connectionLabel}</span></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div>
+    </div>
+    <div className="settings-save-status" role="status" aria-live="polite">{saveState.status === "saving" ? <span className="is-saving"><i aria-hidden="true" />Saving…</span> : saveState.status === "saved" ? <span><Check size={13} aria-hidden="true" />Saved</span> : saveState.status === "error" ? <span className="is-error">{saveState.message}</span> : null}</div>
+    {error && <p className="panel-error">{error}</p>}
+  </div>;
 }
 
 function errorMessage(cause: unknown) { return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "Something went wrong."; }
+function settingsEqual(left: SettingsValue, right: SettingsValue) { return left.shortcut === right.shortcut && left.theme === right.theme && left.proxyUrl === right.proxyUrl; }
 function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function displayShortcut(value: string) { const names: Record<string, string> = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", super: "Win" }; return value.split("+").map((part) => names[part] ?? part.toUpperCase()).join(" + "); }
