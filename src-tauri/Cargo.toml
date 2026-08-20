@@ -1,0 +1,46 @@
+[package]
+name = "gloss"
+version = "0.1.0"
+description = "A focused Windows reading companion"
+authors = ["Gloss contributors"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "gloss_lib"
+# Gloss is Windows-only; the mobile static/dynamic library outputs from the generic Tauri
+# template are unnecessary and conflict with GNU resource linking used by the test harness.
+crate-type = ["rlib"]
+
+[build-dependencies]
+embed-resource = "3"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-opener = "2"
+tokio = { version = "1", features = ["io-util", "net", "sync", "time"] }
+uiautomation = "0.25"
+url = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+] }
