@@ -141,12 +141,21 @@ pub fn capture_selected_text() -> Result<SelectionCapture, String> {
         return Err("Couldn't find the app containing the selection.".to_owned());
     }
 
-    if let Ok(Some(selection)) = capture_with_uia(target) {
-        return Ok(selection);
+    let uia_capture = capture_with_uia(target).ok().flatten();
+    if let Some(selection) = uia_capture.as_ref()
+        && !needs_copy_fallback(&selection.text)
+    {
+        return Ok(selection.clone());
     }
 
     capture_with_copy_shortcut(target)?
+        .or(uia_capture)
         .ok_or_else(|| "Couldn't read the selected text in this app.".to_owned())
+}
+
+fn needs_copy_fallback(text: &str) -> bool {
+    text.chars()
+        .any(|character| matches!(character, '\u{fffc}' | '\u{fffd}'))
 }
 
 fn capture_with_uia(target: HWND) -> Result<Option<SelectionCapture>, String> {
@@ -459,5 +468,10 @@ mod tests {
             KEYBD_EVENT_FLAGS(0)
         );
         assert_eq!(unsafe { released.Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
+    }
+
+    #[test]
+    fn embedded_object_placeholder_requests_copy_semantics() {
+        assert!(needs_copy_fallback("any color you want \u{fffc}"));
     }
 }

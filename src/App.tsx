@@ -52,7 +52,7 @@ const DEMO_SESSION: Session = {
   selectedText: "pleased to announce ive been awarded the title of most obscure and forgotten former fyad",
   messages: [
     { id: "u", turnId: "t", role: "user", content: "pleased to announce ive been awarded the title of most obscure and forgotten former fyad", timestamp: new Date().toISOString() },
-    { id: "a", turnId: "t", role: "assistant", content: "## Quick read\n\n很高兴宣布，我被授予了“最默默无闻、最被遗忘的前 FYAD 成员”这一称号。语气带有明显的自嘲和网络幽默。\n\n## Key points\n\n### Usage · ive\n\n`ive` 是聊天中的非正式拼写，标准写法是 `I've`。\n\n### Grammar · been awarded\n\n这是现在完成时的被动语态：`have been + past participle`，强调已经发生且与现在相关的结果。\n\n### Culture · mock award\n\n把负面评价包装成正式奖项，是一种夸张的自嘲。", timestamp: new Date().toISOString() },
+    { id: "a", turnId: "t", role: "assistant", content: "## Quick read\n\n很高兴宣布，我被授予了“最默默无闻、最被遗忘的前 FYAD 成员”这一称号。语气带有明显的自嘲和网络幽默。\n\n## Key points\n\n### ive\n\n`ive` 是聊天中的非正式拼写，标准写法是 `I've`。\n\n### been awarded\n\n这是现在完成时的被动语态：`have been + past participle`，强调已经发生且与现在相关的结果。\n\n### mock award\n\n把负面评价包装成正式奖项，是一种夸张的自嘲。", timestamp: new Date().toISOString() },
   ],
 };
 
