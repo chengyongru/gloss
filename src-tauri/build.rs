@@ -1,4 +1,6 @@
 fn main() {
+    println!("cargo:rerun-if-changed=icons/icon.ico");
+
     // Keep Tauri's icon and version resource, but link the application manifest separately so
     // GNU unit-test executables receive Common Controls v6 as well as the desktop binary.
     let windows = tauri_build::WindowsAttributes::new_without_app_manifest();

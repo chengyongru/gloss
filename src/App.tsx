@@ -269,7 +269,7 @@ function App() {
         <Toolbar selection={selection} error={captureError} onAction={runAction} onSettings={showSettingsFromToolbar} onClose={close} />
       ) : (
         <section className="card" aria-label="Gloss reading companion">
-          <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={leavePanel} onHistory={showHistory} onSettings={showSettings} onClose={close} />
+          <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={mode === "settings" ? showHistory : leavePanel} onHistory={showHistory} onSettings={showSettings} onClose={close} />
           {mode === "signin" && <SignInPanel onSignIn={signIn} error={error} notice={notice} />}
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
           {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} onChange={setDraftSettings} onSubmit={saveSettings} onSignIn={signIn} onSignOut={signOut} />}
