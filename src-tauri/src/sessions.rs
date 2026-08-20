@@ -16,7 +16,7 @@ use windows::{
 };
 
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 1;
+pub const PROMPT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -26,14 +26,10 @@ pub enum SessionAction {
 }
 
 impl SessionAction {
-    pub fn instructions(
-        self,
-        data_dir: &Path,
-        learner_profile: Option<&str>,
-    ) -> Result<String, String> {
+    pub fn runtime_context(self, data_dir: &Path, selected_text: &str) -> Result<String, String> {
         match self {
-            Self::Triage => prompts::triage(data_dir, learner_profile),
-            Self::Translate => prompts::translate(data_dir),
+            Self::Triage => prompts::triage_context(data_dir, selected_text),
+            Self::Translate => prompts::translate_context(data_dir, selected_text),
         }
     }
 }
@@ -59,6 +55,8 @@ pub struct StoredMessage {
     pub content: String,
     pub timestamp: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<MessageIntent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
 }
 
@@ -67,6 +65,12 @@ pub struct StoredMessage {
 pub enum MessageRole {
     User,
     Assistant,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageIntent {
+    ExplainSelection,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,6 +158,7 @@ impl ConversationSession {
             role: MessageRole::User,
             content: selected_text.clone(),
             timestamp: now,
+            intent: None,
             attempt_id: None,
         };
         (
@@ -184,6 +189,18 @@ impl ConversationSession {
     }
 
     pub fn add_follow_up(&mut self, content: String) -> Result<String, String> {
+        self.add_user_turn(content, None)
+    }
+
+    pub fn add_explain_selection(&mut self, content: String) -> Result<String, String> {
+        self.add_user_turn(content, Some(MessageIntent::ExplainSelection))
+    }
+
+    fn add_user_turn(
+        &mut self,
+        content: String,
+        intent: Option<MessageIntent>,
+    ) -> Result<String, String> {
         if self.metadata.action != SessionAction::Triage {
             return Err("Follow-up questions are only available after Triage.".to_owned());
         }
@@ -198,6 +215,7 @@ impl ConversationSession {
             role: MessageRole::User,
             content,
             timestamp: now,
+            intent,
             attempt_id: None,
         });
         self.metadata.updated_at = now;
@@ -216,12 +234,23 @@ impl ConversationSession {
         learner_profile: Option<&str>,
     ) -> Result<Value, String> {
         let mut input = Vec::new();
-        for message in &self.messages {
+        for (index, message) in self.messages.iter().enumerate() {
             match message.role {
                 MessageRole::User => input.push(json!({
                     "type": "message",
                     "role": "user",
-                    "content": [{"type": "input_text", "text": message.content}],
+                    "content": [{
+                        "type": "input_text",
+                        "text": match message.intent {
+                            Some(MessageIntent::ExplainSelection) => {
+                                prompts::explain_selection_context(data_dir, &message.content)?
+                            }
+                            None if index == 0 => {
+                                self.metadata.action.runtime_context(data_dir, &self.metadata.selected_text)?
+                            }
+                            None => message.content.clone(),
+                        }
+                    }],
                 })),
                 MessageRole::Assistant => {
                     let output_items = message
@@ -271,7 +300,7 @@ impl ConversationSession {
             "model": self.metadata.model,
             "store": false,
             "stream": true,
-            "instructions": self.metadata.action.instructions(data_dir, learner_profile)?,
+            "instructions": prompts::system(data_dir, learner_profile)?,
             "input": input,
             "include": ["reasoning.encrypted_content"],
             "reasoning": reasoning,
@@ -330,6 +359,7 @@ impl ConversationSession {
             role: MessageRole::Assistant,
             content: text,
             timestamp: Utc::now(),
+            intent: None,
             attempt_id: Some(attempt_id.to_owned()),
         });
         self.metadata.updated_at = Utc::now();
@@ -549,9 +579,14 @@ mod tests {
         let body = session.request_body(&data_dir, None).unwrap();
         fs::remove_dir_all(&data_dir).unwrap();
         assert_eq!(body["model"], MODEL);
-        assert_eq!(
-            body["input"][0]["content"][0]["text"],
-            "I've been awarded the title."
+        let initial = body["input"][0]["content"][0]["text"].as_str().unwrap();
+        assert!(initial.contains("<runtime_context>"));
+        assert!(initial.contains("I've been awarded the title."));
+        assert!(
+            body["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("conversational learning agent")
         );
         assert!(body.get("tools").is_none());
     }
@@ -592,6 +627,32 @@ mod tests {
         fs::remove_dir_all(&data_dir).unwrap();
         assert!(body["input"][1].get("id").is_none());
         assert_eq!(body["input"][1]["type"], "message");
+        assert_eq!(
+            body["input"].as_array().unwrap().last().unwrap()["content"][0]["text"],
+            "Why?"
+        );
         assert_eq!(body["reasoning"]["context"], "all_turns");
+    }
+
+    #[test]
+    fn explain_selection_is_a_user_turn_with_runtime_context() {
+        let (mut session, _) =
+            ConversationSession::new(SessionAction::Triage, "Selected text".to_owned());
+        session
+            .add_explain_selection("been awarded".to_owned())
+            .unwrap();
+        let data_dir = std::env::temp_dir().join(format!("gloss-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&data_dir).unwrap();
+        let body = session.request_body(&data_dir, None).unwrap();
+        fs::remove_dir_all(&data_dir).unwrap();
+
+        assert_eq!(session.messages[1].role, MessageRole::User);
+        assert_eq!(
+            session.messages[1].intent,
+            Some(MessageIntent::ExplainSelection)
+        );
+        let shortcut = body["input"][1]["content"][0]["text"].as_str().unwrap();
+        assert!(shortcut.contains("passage the learner selected"));
+        assert!(shortcut.contains("been awarded"));
     }
 }

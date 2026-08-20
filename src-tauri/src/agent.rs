@@ -83,6 +83,23 @@ pub async fn submit_follow_up(
 }
 
 #[tauri::command]
+pub async fn explain_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    selected_text: String,
+) -> Result<SessionView, String> {
+    let session_id = active_session_id(&state)?;
+    let (turn_id, view) = {
+        let mut sessions = state.sessions.lock().await;
+        let session = ensure_session_loaded(&state, &mut sessions, &session_id)?;
+        let turn_id = session.add_explain_selection(selected_text)?;
+        (turn_id, session.view())
+    };
+    begin_turn(app, session_id, turn_id).await?;
+    Ok(view)
+}
+
+#[tauri::command]
 pub async fn retry_turn(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let session_id = active_session_id(&state)?;
     let turn_id = {
@@ -177,7 +194,7 @@ async fn begin_turn(app: AppHandle, session_id: String, turn_id: String) -> Resu
         let attempt_id = session.begin_attempt(&turn_id, request.clone())?;
         (attempt_id, request, session.clone())
     };
-    persist_if_enabled(&state, &persisted)?;
+    persist_session(&state, &persisted)?;
     let _ = app.emit(
         "agent-event",
         AgentEvent::Started {
@@ -209,7 +226,7 @@ async fn begin_turn(app: AppHandle, session_id: String, turn_id: String) -> Resu
                         )?;
                         (session.view(), session.clone())
                     };
-                    persist_if_enabled(&state, &persisted)?;
+                    persist_session(&state, &persisted)?;
                     Ok::<SessionView, String>(view)
                 }
                 .await;
@@ -263,7 +280,7 @@ async fn begin_turn(app: AppHandle, session_id: String, turn_id: String) -> Resu
                     result.ok()
                 };
                 if let Some(session) = persisted {
-                    let _ = persist_if_enabled(&state, &session);
+                    let _ = persist_session(&state, &session);
                 }
                 let _ = app.emit(
                     "agent-event",
@@ -304,14 +321,6 @@ fn ensure_session_loaded<'a>(
         .ok_or_else(|| "The Gloss session is unavailable.".to_owned())
 }
 
-fn persist_if_enabled(state: &AppState, session: &ConversationSession) -> Result<(), String> {
-    let save_history = state
-        .settings
-        .lock()
-        .map_err(|_| "The settings state is unavailable.".to_owned())?
-        .save_history;
-    if save_history {
-        sessions::save_session(&state.data_dir()?, session)?;
-    }
-    Ok(())
+fn persist_session(state: &AppState, session: &ConversationSession) -> Result<(), String> {
+    sessions::save_session(&state.data_dir()?, session)
 }

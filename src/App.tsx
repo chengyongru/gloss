@@ -31,10 +31,10 @@ type Mode = "toolbar" | "card" | "history" | "settings" | "signin";
 type Theme = "system" | "light" | "dark";
 type Selection = { text: string; anchor?: { left: number; top: number; width: number; height: number } };
 type OverlayState = { status: "idle" } | { status: "ready"; selection: Selection } | { status: "capture_error"; message: string };
-type Message = { id: string; turnId: string; role: "user" | "assistant"; content: string; timestamp: string; attemptId?: string };
+type Message = { id: string; turnId: string; role: "user" | "assistant"; content: string; timestamp: string; intent?: "explain_selection"; attemptId?: string };
 type Session = { sessionId: string; action: Action; selectedText: string; messages: Message[] };
 type SessionSummary = { sessionId: string; action: Action; preview: string; updatedAt: string };
-type SettingsValue = { shortcut: string; saveHistory: boolean; theme: Theme; proxyUrl: string };
+type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string };
 type AuthStatus = { status: "signed_out" } | { status: "connected"; expiresAtMs: number } | { status: "error"; message: string };
 type AgentEvent =
   | { type: "started"; sessionId: string; attemptId: string }
@@ -42,7 +42,7 @@ type AgentEvent =
   | { type: "completed"; sessionId: string; attemptId: string; session: Session }
   | { type: "failed"; sessionId: string; attemptId: string; message: string; partial: string; incomplete: boolean };
 
-const DEFAULT_SETTINGS: SettingsValue = { shortcut: "ctrl+alt+shift+t", saveHistory: true, theme: "system", proxyUrl: "" };
+const DEFAULT_SETTINGS: SettingsValue = { shortcut: "ctrl+alt+shift+t", theme: "system", proxyUrl: "" };
 const isTauri = "__TAURI_INTERNALS__" in window;
 const DEMO_SESSION: Session = {
   sessionId: "preview",
@@ -50,7 +50,7 @@ const DEMO_SESSION: Session = {
   selectedText: "pleased to announce ive been awarded the title of most obscure and forgotten former fyad",
   messages: [
     { id: "u", turnId: "t", role: "user", content: "pleased to announce ive been awarded the title of most obscure and forgotten former fyad", timestamp: new Date().toISOString() },
-    { id: "a", turnId: "t", role: "assistant", content: "## Quick read\n\n很高兴宣布，我被授予了“最默默无闻、最被遗忘的前 FYAD 成员”这一称号。语气带有明显的自嘲和网络幽默。\n\n## What makes it hard\n\n### Usage · ive\n\n`ive` 是聊天中的非正式拼写，标准写法是 `I've`。\n\n### Grammar · been awarded\n\n这是现在完成时的被动语态：`have been + past participle`，强调已经发生且与现在相关的结果。\n\n### Culture · mock award\n\n把负面评价包装成正式奖项，是一种夸张的自嘲。\n\n## In plain English\n\nI'm happy to say that people jokingly named me the least-known and most-forgotten former FYAD member.", timestamp: new Date().toISOString() },
+    { id: "a", turnId: "t", role: "assistant", content: "## Quick read\n\n很高兴宣布，我被授予了“最默默无闻、最被遗忘的前 FYAD 成员”这一称号。语气带有明显的自嘲和网络幽默。\n\n## Key points\n\n### Usage · ive\n\n`ive` 是聊天中的非正式拼写，标准写法是 `I've`。\n\n### Grammar · been awarded\n\n这是现在完成时的被动语态：`have been + past participle`，强调已经发生且与现在相关的结果。\n\n### Culture · mock award\n\n把负面评价包装成正式奖项，是一种夸张的自嘲。", timestamp: new Date().toISOString() },
   ],
 };
 
@@ -117,6 +117,7 @@ function App() {
           setError(null);
           setNotice("Connected to ChatGPT");
           setMode("toolbar");
+          invoke("collapse_overlay").catch(() => undefined);
         } else if (payload.status === "error") {
           setNotice("");
           setError(payload.message);
@@ -140,7 +141,9 @@ function App() {
     return () => { cancelled = true; unlisteners.forEach((unlisten) => unlisten()); };
   }, []);
 
-  useEffect(() => { document.documentElement.dataset.theme = settings.theme; }, [settings.theme]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = mode === "settings" ? draftSettings.theme : settings.theme;
+  }, [draftSettings.theme, mode, settings.theme]);
   useEffect(() => { if (busy) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [streamText, busy]);
   useEffect(() => {
     const preventBrowserMenu = (event: globalThis.MouseEvent) => event.preventDefault();
@@ -190,6 +193,13 @@ function App() {
     catch (cause) { setBusy(false); setError(errorMessage(cause)); }
   }
 
+  async function explainSelection(selectedText: string) {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try { setSession(await invoke<Session>("explain_selection", { selectedText })); }
+    catch (cause) { setBusy(false); setError(errorMessage(cause)); }
+  }
+
   async function retry() {
     setBusy(true); setError(null); setStreamText("");
     try { await invoke("retry_turn"); }
@@ -226,8 +236,22 @@ function App() {
     event.preventDefault();
     try {
       const value = await invoke<SettingsValue>("update_settings", { settings: draftSettings });
-      setSettings(value); setDraftSettings(value); setNotice("Settings saved"); setMode("card");
+      setSettings(value); setDraftSettings(value); setNotice("Settings saved");
+      await leavePanel();
     } catch (cause) { setError(errorMessage(cause)); }
+  }
+
+  async function leavePanel() {
+    if (session) {
+      setMode("card");
+      return;
+    }
+    if (selection || captureError) {
+      setMode("toolbar");
+      if (isTauri) await invoke("collapse_overlay").catch((cause) => setError(errorMessage(cause)));
+      return;
+    }
+    close();
   }
 
   async function copyAnswer() {
@@ -244,11 +268,11 @@ function App() {
         <Toolbar selection={selection} error={captureError} onAction={runAction} onSettings={showSettingsFromToolbar} onClose={close} />
       ) : (
         <section className="card" aria-label="Gloss reading companion">
-          <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={() => setMode("card")} onHistory={showHistory} onSettings={showSettings} onClose={close} />
+          <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={leavePanel} onHistory={showHistory} onSettings={showSettings} onClose={close} />
           {mode === "signin" && <SignInPanel onSignIn={signIn} error={error} notice={notice} />}
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
           {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} onChange={setDraftSettings} onSubmit={saveSettings} onSignIn={signIn} onSignOut={signOut} />}
-          {mode === "card" && <ResultPanel ref={scrollRef} session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onRetry={retry} onCopy={copyAnswer} />}
+          {mode === "card" && <ResultPanel ref={scrollRef} session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onRetry={retry} onCopy={copyAnswer} />}
           <div className="sr-status" role="status" aria-live="polite">{notice || (busy ? "Gloss is thinking" : error ?? "")}</div>
         </section>
       )}
@@ -295,20 +319,90 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
   );
 }
 
-type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copied: boolean; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onRetry: () => void; onCopy: () => void };
-const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onRetry, onCopy }, ref) {
+type ReadingSelection = { text: string; left: number; top: number; placement: "above" | "below" };
+type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copied: boolean; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onExplainSelection: (selectedText: string) => void; onRetry: () => void; onCopy: () => void };
+const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onExplainSelection, onRetry, onCopy }, ref) {
+  const scrollElement = useRef<HTMLDivElement | null>(null);
+  const popover = useRef<HTMLButtonElement | null>(null);
+  const [readingSelection, setReadingSelection] = useState<ReadingSelection | null>(null);
   const messages = session?.messages.filter((_, index) => index > 0) ?? [];
   const hasAnswer = messages.some((message) => message.role === "assistant") || Boolean(streamText);
+  const canExplain = session?.action === "triage" && hasAnswer && !busy;
+
+  useEffect(() => {
+    if (!readingSelection) return;
+    const dismiss = (event: globalThis.PointerEvent) => {
+      if (!popover.current?.contains(event.target as Node)) setReadingSelection(null);
+    };
+    const dismissWithEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setReadingSelection(null);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    window.addEventListener("keydown", dismissWithEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("keydown", dismissWithEscape, true);
+    };
+  }, [readingSelection]);
+
+  function setScrollElement(node: HTMLDivElement | null) {
+    scrollElement.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  }
+
+  function captureReadingSelection() {
+    if (!canExplain) {
+      setReadingSelection(null);
+      return;
+    }
+    const current = window.getSelection();
+    if (!current || current.isCollapsed || current.rangeCount === 0) {
+      setReadingSelection(null);
+      return;
+    }
+    const text = current.toString().trim();
+    const range = current.getRangeAt(0);
+    const start = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer as Element : range.startContainer.parentElement;
+    const end = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer as Element : range.endContainer.parentElement;
+    const startSurface = start?.closest(".markdown-answer, .source-quote");
+    const endSurface = end?.closest(".markdown-answer, .source-quote");
+    if (!text || !startSurface || startSurface !== endSurface || !scrollElement.current?.contains(startSurface)) {
+      setReadingSelection(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    const placement = rect.top >= 112 ? "above" : "below";
+    setReadingSelection({
+      text,
+      left: Math.min(window.innerWidth - 68, Math.max(68, rect.left + rect.width / 2)),
+      top: placement === "above" ? rect.top - 8 : rect.bottom + 8,
+      placement,
+    });
+  }
+
+  function explainReadingSelection() {
+    if (!readingSelection) return;
+    const selectedText = readingSelection.text;
+    setReadingSelection(null);
+    window.getSelection()?.removeAllRanges();
+    onExplainSelection(selectedText);
+  }
+
   return <>
-    <div className="result-scroll" ref={ref}>
+    <div className="result-scroll" ref={setScrollElement} onPointerUp={() => window.requestAnimationFrame(captureReadingSelection)} onKeyUp={captureReadingSelection} onScroll={() => setReadingSelection(null)}>
       {(session?.selectedText || selection?.text) && <blockquote className="source-quote"><span>Selected text</span><p>{session?.selectedText || selection?.text}</p></blockquote>}
       {!hasAnswer && busy && <LoadingState />}
       <div className="conversation">
-        {messages.map((message) => message.role === "user" ? <div className="user-question" key={message.id}>{message.content}</div> : <MarkdownAnswer key={message.id} content={message.content} />)}
+        {messages.map((message) => message.role === "user" ? message.intent === "explain_selection" ? <div className="user-question explain-question" key={message.id}><span><MessageCircleQuestion size={13} /> Explain this</span><q>{message.content}</q></div> : <div className="user-question" key={message.id}>{message.content}</div> : <MarkdownAnswer key={message.id} content={message.content} />)}
         {streamText && <MarkdownAnswer content={streamText} streaming />}
       </div>
       {error && <div className="inline-error" role="alert"><div><strong>{streamText ? "Response interrupted" : "Couldn't complete this"}</strong><p>{error}</p></div><button className="secondary-button" onClick={onRetry} disabled={busy}><RefreshCw size={15} /> Retry</button></div>}
     </div>
+    {readingSelection && <button ref={popover} className={`selection-popover is-${readingSelection.placement}`} style={{ left: readingSelection.left, top: readingSelection.top }} onPointerDown={(event) => event.preventDefault()} onClick={explainReadingSelection}><MessageCircleQuestion size={14} /> Explain this</button>}
     {(hasAnswer || error) && <footer className="result-footer">
       <div className="answer-tools"><button className="icon-button" onClick={onCopy} aria-label="Copy latest answer">{copied ? <Check size={16} /> : <Copy size={16} />}</button><span>{copied ? "Copied" : busy ? "Writing…" : "Response complete"}</span></div>
       {session?.action === "triage" && <form className="follow-up" onSubmit={onQuestionSubmit}><label htmlFor="follow-up" className="sr-only">Ask a follow-up</label><input id="follow-up" value={question} onChange={(event) => onQuestionChange(event.currentTarget.value)} placeholder="Ask about this text…" disabled={busy} autoComplete="off" /><button type="submit" aria-label="Send follow-up" disabled={busy || !question.trim()}><Send size={16} /></button></form>}
@@ -402,7 +496,6 @@ function ThemePicker({ value, onChange }: { value: Theme; onChange: (theme: Them
       aria-expanded={open}
       aria-controls={open ? "theme-options" : undefined}
       aria-labelledby="theme-label theme-value"
-      aria-describedby="theme-help"
       onClick={() => open ? closePicker() : openPicker(selectedIndex)}
       onKeyDown={handleTriggerKeyDown}
     >
@@ -456,10 +549,10 @@ function SettingsPanel({ value, auth, error, onChange, onSubmit, onSignIn, onSig
     onChange({ ...value, proxyUrl });
   }
   return <form className="panel-scroll settings-panel" onSubmit={submit} noValidate>
-    <section className="setting-group"><h2>Activation</h2><label className="setting-row stacked" htmlFor="shortcut"><span><strong>Global shortcut</strong><small>Select text, then press this shortcut.</small></span><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} aria-describedby="shortcut-help" /><small id="shortcut-help">Click the field and press your new combination.</small></label></section>
-    <section className="setting-group"><h2>Appearance & data</h2><div className="setting-row theme-setting-row"><span><strong id="theme-label">Theme</strong><small id="theme-help">Match Windows or choose one.</small></span><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div><label className="setting-row" htmlFor="history-toggle"><span><strong>Save history</strong><small>Store complete sessions as local JSONL.</small></span><input id="history-toggle" className="switch" type="checkbox" checked={value.saveHistory} onChange={(event) => onChange({ ...value, saveHistory: event.target.checked })} /></label></section>
-    <section className="setting-group"><h2>Network</h2><label className="setting-row stacked" htmlFor="proxy-url"><span><strong>Proxy</strong><small>Optional. Used for OAuth token exchange and all AI requests.</small></span><input ref={proxyRef} id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={`proxy-help${proxyError ? " proxy-error" : ""}`} /><small id="proxy-help">HTTP, HTTPS, SOCKS5, and SOCKS5H are supported.</small>{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label></section>
-    <section className="setting-group"><h2>ChatGPT</h2><div className="setting-row"><span><strong>{auth.status === "connected" ? "Connected" : auth.status === "error" ? "Connection failed" : "Not connected"}</strong><small>OAuth credentials are stored locally in plaintext.</small></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div></section>
+    <section className="setting-group"><h2>Activation</h2><label className="setting-row stacked" htmlFor="shortcut"><span><strong>Global shortcut</strong></span><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} /></label></section>
+    <section className="setting-group"><h2>Appearance</h2><div className="setting-row theme-setting-row"><span><strong id="theme-label">Theme</strong></span><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div></section>
+    <section className="setting-group"><h2>Network</h2><label className="setting-row stacked" htmlFor="proxy-url"><span><strong>Proxy</strong></span><input ref={proxyRef} id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label></section>
+    <section className="setting-group"><h2>ChatGPT</h2><div className="setting-row"><span><strong>{auth.status === "connected" ? "Connected" : auth.status === "error" ? "Connection failed" : "Not connected"}</strong></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div></section>
     {error && <p className="panel-error">{error}</p>}<button className="primary-button wide save-button" type="submit">Save settings</button>
   </form>;
 }

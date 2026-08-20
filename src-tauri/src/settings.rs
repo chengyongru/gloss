@@ -94,11 +94,16 @@ mod tests {
     use crate::app_state::AppSettings;
 
     #[test]
-    fn older_settings_without_proxy_still_load() {
+    fn legacy_settings_fields_are_ignored() {
         let settings: AppSettings = serde_json::from_str(
-            r#"{"shortcut":"ctrl+alt+shift+t","saveHistory":true,"theme":"system"}"#,
+            r#"{"shortcut":"ctrl+alt+shift+t","saveHistory":false,"theme":"system"}"#,
         )
         .unwrap();
         assert!(settings.proxy_url.is_empty());
+        assert!(
+            !serde_json::to_string(&settings)
+                .unwrap()
+                .contains("saveHistory")
+        );
     }
 }

@@ -229,6 +229,7 @@ fn profile_request(
             json!({
                 "role": message.role,
                 "content": message.content,
+                "intent": message.intent,
             })
         })
         .collect::<Vec<_>>();
@@ -238,9 +239,8 @@ fn profile_request(
             "dimensions": profile.dimensions,
             "recentObservations": profile.observations.iter().take(24).collect::<Vec<_>>(),
         },
-        "contextOnly": {
+        "readingContext": {
             "selectedText": session.selected_text,
-            "warning": "This text was selected by the user and is not evidence of their CEFR level."
         },
         "evidenceConversation": follow_up_conversation,
     });
@@ -264,7 +264,7 @@ fn profile_request(
                 "schema": profile_patch_schema()
             }
         },
-        "prompt_cache_key": "gloss:cefr-learner-profile:v2"
+        "prompt_cache_key": "gloss:cefr-learner-profile:v3"
     }))
 }
 

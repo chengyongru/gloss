@@ -9,7 +9,6 @@ pub const DEFAULT_SHORTCUT: &str = "ctrl+alt+shift+t";
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub shortcut: String,
-    pub save_history: bool,
     pub theme: ThemePreference,
     #[serde(default)]
     pub proxy_url: String,
@@ -19,7 +18,6 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             shortcut: DEFAULT_SHORTCUT.to_owned(),
-            save_history: true,
             theme: ThemePreference::System,
             proxy_url: String::new(),
         }

@@ -32,7 +32,7 @@ Gloss 是仅支持 Windows 的轻量阅读 Agent。它读取用户主动选中�
 | `src-tauri/src/sessions.rs` | 会话模型、请求体和 JSONL 持久化 |
 | `src-tauri/src/agent.rs` | Triage、Translate、继续提问和事件流 |
 | `src-tauri/src/profile.rs` | CEFR 学习画像更新与合并 |
-| `src-tauri/src/prompts.rs` | 运行时 Prompt 模板加载 |
+| `src-tauri/src/prompts.rs` | System Prompt 与运行时上下文模板加载 |
 | `src-tauri/prompts/` | 随应用打包的默认 Prompt 模板 |
 
 ## 开发环境
@@ -91,7 +91,7 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 3. `overlay.rs` 在选区附近显示工具栏；无法取得可靠锚点时使用回退位置。
 4. 用户选择 Triage 或 Translate 后，`agent.rs` 创建会话并组装 Responses 请求。
 5. `responses.rs` 通过事件流把增量结果发送给 React 界面。
-6. 开启历史记录时，`sessions.rs` 将完整会话写入 JSONL。
+6. `sessions.rs` 将完整会话写入 JSONL。
 7. Triage 至少发生一次继续提问后，`profile.rs` 才会在后台评估并更新 CEFR 画像。
 
 ## Responses 接口与重试
@@ -104,16 +104,18 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 
 ```rust
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 1;
+pub const PROMPT_VERSION: u32 = 3;
 ```
 
 ## Prompt 模板
 
 打包默认值位于 `src-tauri/prompts/`：
 
-- `triage.md`
-- `translate.md`
-- `learner-profile.md`
+- `system.md`：定义 Gloss 的身份、对话行为和学习画像使用方式
+- `triage.md`：首轮 Triage runtime context
+- `translate.md`：首轮 Translate runtime context
+- `explain-selection.md`：Triage 结果划词后的快捷解释 runtime context
+- `learner-profile.md`：根据多轮 Triage 对话生成 CEFR 画像补丁
 
 首次启动时，Gloss 会把缺失的模板复制到：
 
@@ -121,7 +123,7 @@ pub const PROMPT_VERSION: u32 = 1;
 %APPDATA%\com.gloss.desktop\prompts\
 ```
 
-每次请求都会重新读取运行时模板。保存 Markdown 文件后，下一次请求会直接使用新内容。删除运行时模板并重启 Gloss，会恢复当前打包版本的默认文件。
+每次请求都会重新读取模板。首条用户消息由 action runtime context 与 JSON 编码后的选中文本组成；手动追问保持为普通用户消息；`Explain this` 消息作为带 `explain_selection` 意图的用户消息保存，并在请求时套用独立 runtime context。保存 Markdown 文件后，下一次请求会直接使用新内容。删除运行时模板并重启 Gloss，会恢复当前打包版本的默认文件。
 
 若模板改动需要体现在新会话元数据和缓存键中，请同步递增 `src-tauri/src/sessions.rs` 内的 `PROMPT_VERSION`。
 
@@ -140,7 +142,7 @@ pub const PROMPT_VERSION: u32 = 1;
 ```
 
 - `oauth.json` 明文保存 OAuth 令牌；会话 JSONL 保存对话和请求元数据。
-- 关闭历史记录后，新会话保留在内存中；已有历史文件由用户在历史页面中删除。
+- 每次会话更新都会写入对应的 JSONL；历史页面中的删除操作会移除该文件。
 - `learner-profile.json` 基于 Triage 后的多轮对话更新。初始选中文本用于提供上下文，英语水平证据取自用户在后续对话中的表达。
 
 ## 代理行为

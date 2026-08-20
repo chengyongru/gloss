@@ -25,6 +25,15 @@ fn expand_overlay(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn collapse_overlay(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    match state.overlay_snapshot()? {
+        OverlayState::Ready { selection } => overlay::show_toolbar(&app, selection.anchor),
+        OverlayState::CaptureError { .. } => overlay::show_toolbar(&app, None),
+        OverlayState::Idle => overlay::hide(&app),
+    }
+}
+
+#[tauri::command]
 fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
     overlay::hide(&app)
 }
@@ -94,6 +103,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_overlay_state,
             expand_overlay,
+            collapse_overlay,
             hide_overlay,
             show_settings,
             oauth::start_oauth_login,
@@ -101,6 +111,7 @@ pub fn run() {
             oauth::logout_oauth,
             agent::start_action,
             agent::submit_follow_up,
+            agent::explain_selection,
             agent::retry_turn,
             agent::get_active_session,
             agent::list_history,
