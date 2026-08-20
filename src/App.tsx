@@ -19,6 +19,7 @@ import {
   Settings,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -28,8 +29,10 @@ import glossLogo from "./assets/gloss-logo.png";
 import { remarkCjkStrongBoundaries } from "./markdown";
 
 type Action = "triage" | "translate";
-type Mode = "toolbar" | "card" | "history" | "settings" | "signin";
+type Mode = "toolbar" | "card" | "history" | "settings" | "profile" | "signin";
 type Theme = "system" | "light" | "dark";
+type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | "insufficient_evidence";
+type ProfileDimensionName = "reading" | "vocabulary" | "grammar" | "pragmatics";
 type Selection = { text: string; anchor?: { left: number; top: number; width: number; height: number } };
 type OverlayState = { status: "idle" } | { status: "ready"; selection: Selection } | { status: "capture_error"; message: string };
 type Message = { id: string; turnId: string; role: "user" | "assistant"; content: string; timestamp: string; intent?: "explain_selection"; attemptId?: string };
@@ -38,6 +41,10 @@ type SessionSummary = { sessionId: string; action: Action; preview: string; upda
 type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string };
 type SettingsSaveState = { status: "idle" | "saving" | "saved" } | { status: "error"; message: string };
 type AuthStatus = { status: "signed_out" } | { status: "connected"; expiresAtMs: number } | { status: "error"; message: string };
+type ProfileEstimate = { level: CefrLevel; confidence: number; rationale: string };
+type ProfileDimension = { dimension: ProfileDimensionName; level: CefrLevel; confidence: number; evidence: string; updatedAt: string };
+type ProfileObservation = { dimension: ProfileDimensionName; cefrLevel: CefrLevel; descriptor: string; evidence: string; evidenceCount: number; firstSeenAt: string; lastSeenAt: string };
+type LearnerProfile = { framework: "CEFR"; updatedAt: string; conversationsObserved: number; overall: ProfileEstimate; dimensions: ProfileDimension[]; recentObservations: ProfileObservation[] };
 type AgentEvent =
   | { type: "started"; sessionId: string; attemptId: string }
   | { type: "delta"; sessionId: string; attemptId: string; delta: string }
@@ -55,6 +62,21 @@ const DEMO_SESSION: Session = {
     { id: "a", turnId: "t", role: "assistant", content: "## Quick read\n\n很高兴宣布，我被授予了“最默默无闻、最被遗忘的前 FYAD 成员”这一称号。语气带有明显的自嘲和网络幽默。\n\n## Key points\n\n### ive\n\n`ive` 是聊天中的非正式拼写，标准写法是 `I've`。\n\n### been awarded\n\n这是现在完成时的被动语态：`have been + past participle`，强调已经发生且与现在相关的结果。\n\n### mock award\n\n把负面评价包装成正式奖项，是一种夸张的自嘲。", timestamp: new Date().toISOString() },
   ],
 };
+const DEMO_PROFILE: LearnerProfile = {
+  framework: "CEFR",
+  updatedAt: new Date().toISOString(),
+  conversationsObserved: 4,
+  overall: { level: "B1", confidence: 0.64, rationale: "能够理解真实技术文本的主旨；遇到习惯表达和隐含语气时，适合补充针对性说明。" },
+  dimensions: [
+    { dimension: "reading", level: "B1", confidence: 0.72, evidence: "能够跟随主要论点，并识别作者给出的实际建议。", updatedAt: new Date().toISOString() },
+    { dimension: "vocabulary", level: "B1", confidence: 0.58, evidence: "能够理解常见技术词汇，并针对陌生表达提出具体问题。", updatedAt: new Date().toISOString() },
+    { dimension: "grammar", level: "B1", confidence: 0.61, evidence: "能够识别常见从句结构；理解压缩句式时偶尔需要提示。", updatedAt: new Date().toISOString() },
+    { dimension: "pragmatics", level: "A2", confidence: 0.46, evidence: "理解隐含语气、反讽和对话意图时仍会受益于解释。", updatedAt: new Date().toISOString() },
+  ],
+  recentObservations: [
+    { dimension: "pragmatics", cefrLevel: "A2", descriptor: "正在建立对短帖中隐含语气的识别能力。", evidence: "曾追问一段产品公告是在陈述事实还是表达调侃。", evidenceCount: 2, firstSeenAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() },
+  ],
+};
 
 function App() {
   const [mode, setMode] = useState<Mode>(isTauri ? "toolbar" : "card");
@@ -70,6 +92,9 @@ function App() {
   const [settings, setSettings] = useState<SettingsValue>(DEFAULT_SETTINGS);
   const [draftSettings, setDraftSettings] = useState<SettingsValue>(DEFAULT_SETTINGS);
   const [settingsSaveState, setSettingsSaveState] = useState<SettingsSaveState>({ status: "idle" });
+  const [profile, setProfile] = useState<LearnerProfile | null>(isTauri ? null : DEMO_PROFILE);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState("");
@@ -268,6 +293,19 @@ function App() {
     if (isTauri) await invoke("show_settings").catch((cause) => setError(errorMessage(cause)));
   }
 
+  async function showProfile() {
+    setMode("profile");
+    setProfileError(null);
+    if (!isTauri) {
+      setProfile(DEMO_PROFILE);
+      return;
+    }
+    setProfileLoading(true);
+    try { setProfile(await invoke<LearnerProfile>("get_learner_profile")); }
+    catch (cause) { setProfileError(errorMessage(cause)); }
+    finally { setProfileLoading(false); }
+  }
+
   async function returnToToolbar() {
     setMode("toolbar");
     if (isTauri) await invoke("collapse_overlay").catch((cause) => setError(errorMessage(cause)));
@@ -290,7 +328,8 @@ function App() {
           <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={returnToToolbar} onHistory={showHistory} onSettings={showSettings} onClose={close} />
           {mode === "signin" && <SignInPanel onSignIn={signIn} error={error} notice={notice} />}
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
-          {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} saveState={settingsSaveState} onChange={setDraftSettings} onSignIn={signIn} onSignOut={signOut} />}
+          {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} saveState={settingsSaveState} onChange={setDraftSettings} onProfile={showProfile} onSignIn={signIn} onSignOut={signOut} />}
+          {mode === "profile" && <ProfilePanel value={profile} loading={profileLoading} error={profileError} />}
           {mode === "card" && <ResultPanel ref={scrollRef} session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onRetry={retry} onCopy={copyAnswer} />}
           <div className="sr-status" role="status" aria-live="polite">{notice || (busy ? "Gloss is thinking" : error ?? "")}</div>
         </section>
@@ -323,12 +362,12 @@ function Toolbar({ selection, error, onAction, onHistory, onSettings, onClose }:
 }
 
 function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { mode: Mode; action: Action | null; onBack: () => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
-  const title = mode === "history" ? "History" : mode === "settings" ? "Settings" : mode === "signin" ? "Connect" : action === "translate" ? "Translate" : "Triage";
+  const title = mode === "history" ? "History" : mode === "settings" ? "Settings" : mode === "profile" ? "学习画像" : mode === "signin" ? "Connect" : action === "translate" ? "Translate" : "Triage";
   return (
     <header className="card-header" data-tauri-drag-region>
       <div className="header-title">
-        {mode === "history" || mode === "settings" ? <button className="icon-button" aria-label="Back" onClick={onBack}><ArrowLeft size={17} /></button> : <span className="brand-glyph" aria-hidden="true"><img src={glossLogo} alt="" /></span>}
-        <div><strong>{title}</strong>{mode !== "card" && mode !== "settings" && <span>Gloss</span>}</div>
+        {mode === "history" || mode === "settings" || mode === "profile" ? <button className="icon-button" aria-label="Back" onClick={onBack}><ArrowLeft size={17} /></button> : <span className="brand-glyph" aria-hidden="true"><img src={glossLogo} alt="" /></span>}
+        <div><strong>{title}</strong>{mode !== "card" && mode !== "settings" && mode !== "profile" && <span>Gloss</span>}</div>
       </div>
       <div className="header-actions">
         {mode === "card" && <><button className="icon-button" aria-label="Open history" onClick={onHistory} title="History"><Clock3 size={17} /></button><button className="icon-button" aria-label="Open settings" onClick={onSettings} title="Settings"><Settings size={17} /></button></>}
@@ -441,7 +480,54 @@ function HistoryPanel({ items, error, onOpen, onDelete }: { items: SessionSummar
   return <div className="panel-scroll history-panel"><p className="panel-intro">Your reading sessions stay on this PC.</p>{error && <p className="panel-error">{error}</p>}{!error && items.length === 0 && <div className="empty-state"><Clock3 size={22} /><strong>No history yet</strong><p>Your first Triage or Translate session will appear here.</p></div>}<div className="history-list">{items.map((item) => <div className="history-item" key={item.sessionId}><button className="history-open" onClick={() => onOpen(item.sessionId)}><span className={`history-icon ${item.action}`}>{item.action === "triage" ? <MessageCircleQuestion size={16} /> : <Languages size={16} />}</span><span className="history-copy"><strong>{item.preview}</strong><small>{formatTime(item.updatedAt)} · {capitalize(item.action)}</small></span></button><button className="history-delete" aria-label="Delete history item" onClick={(event) => onDelete(event, item.sessionId)}><Trash2 size={15} /></button></div>)}</div></div>;
 }
 
-type SettingsProps = { value: SettingsValue; auth: AuthStatus; error: string | null; saveState: SettingsSaveState; onChange: (value: SettingsValue) => void; onSignIn: () => void; onSignOut: () => void };
+const PROFILE_DIMENSIONS: ReadonlyArray<{ value: ProfileDimensionName; label: string }> = [
+  { value: "reading", label: "阅读" },
+  { value: "vocabulary", label: "词汇" },
+  { value: "grammar", label: "语法" },
+  { value: "pragmatics", label: "语用" },
+];
+
+function ProfilePanel({ value, loading, error }: { value: LearnerProfile | null; loading: boolean; error: string | null }) {
+  if (loading) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>正在读取画像…</strong></div></div>;
+  if (error) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>无法读取画像</strong><p>{error}</p></div></div>;
+  if (!value || value.conversationsObserved === 0) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>尚未形成画像</strong><p>在 Triage 后继续提问，Gloss 会据此更新画像。</p></div></div>;
+
+  const dimensions = new Map(value.dimensions.map((dimension) => [dimension.dimension, dimension]));
+  const levelAvailable = value.overall.level !== "insufficient_evidence";
+  return <div className="panel-scroll profile-panel">
+    <section className="profile-summary" aria-labelledby="profile-overall-heading">
+      <div className="profile-overview">
+        <span className={`profile-level${levelAvailable ? "" : " is-pending"}`} aria-hidden="true">{levelAvailable ? value.overall.level : "—"}</span>
+        <div className="profile-overall-copy"><span id="profile-overall-heading">综合水平</span><strong>{cefrDescription(value.overall.level)}</strong></div>
+      </div>
+      <p>{value.overall.rationale}</p>
+      <div className="profile-meta"><span>{confidenceLabel(value.overall.confidence)}</span><span>{conversationLabel(value.conversationsObserved)}</span><span>更新于 {formatProfileDate(value.updatedAt)}</span></div>
+    </section>
+
+    <section className="profile-section" aria-labelledby="profile-skills-heading">
+      <h2 id="profile-skills-heading">分项能力</h2>
+      <div className="profile-dimensions">{PROFILE_DIMENSIONS.map(({ value: dimensionName, label }) => {
+        const estimate = dimensions.get(dimensionName);
+        return <article className="profile-dimension" key={dimensionName}>
+          <div className="profile-dimension-heading"><strong>{label}</strong><span>{estimate ? cefrLabel(estimate.level) : "证据不足"}</span></div>
+          {estimate && <><small>{confidenceLabel(estimate.confidence)}</small><p>{estimate.evidence}</p></>}
+        </article>;
+      })}</div>
+    </section>
+
+    {value.recentObservations.length > 0 && <section className="profile-section" aria-labelledby="profile-evidence-heading">
+      <h2 id="profile-evidence-heading">最近证据</h2>
+      <div className="profile-observations">{value.recentObservations.slice(0, 8).map((observation, index) => <article className="profile-observation" key={`${observation.dimension}-${observation.lastSeenAt}-${index}`}>
+        <div className="profile-observation-meta"><span>{profileDimensionLabel(observation.dimension)}</span><span>{cefrLabel(observation.cefrLevel)}</span></div>
+        <strong>{observation.descriptor}</strong>
+        <p>{observation.evidence}</p>
+        <small>{observation.evidenceCount} 条证据 · {formatProfileDate(observation.lastSeenAt)}</small>
+      </article>)}</div>
+    </section>}
+  </div>;
+}
+
+type SettingsProps = { value: SettingsValue; auth: AuthStatus; error: string | null; saveState: SettingsSaveState; onChange: (value: SettingsValue) => void; onProfile: () => void; onSignIn: () => void; onSignOut: () => void };
 const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string }> = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
@@ -541,7 +627,7 @@ function ThemePicker({ value, onChange }: { value: Theme; onChange: (theme: Them
   </div>;
 }
 
-function SettingsPanel({ value, auth, error, saveState, onChange, onSignIn, onSignOut }: SettingsProps) {
+function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onSignIn, onSignOut }: SettingsProps) {
   function recordShortcut(event: KeyboardEvent<HTMLInputElement>) {
     event.preventDefault();
     if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
@@ -557,6 +643,7 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onSignIn, onSi
   return <div className="panel-scroll settings-panel">
     <div className="settings-fields">
       <div className="setting-field setting-field-inline account-setting"><span className="account-copy"><strong className="setting-label">ChatGPT</strong><span className={`connection-status is-${auth.status}`}><i aria-hidden="true" />{connectionLabel}</span></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div>
+      <button className="profile-setting-link" type="button" onClick={onProfile}><strong className="setting-label">学习画像</strong><ChevronRight size={16} aria-hidden="true" /></button>
       <label className="setting-field" htmlFor="shortcut"><strong className="setting-label">Global shortcut</strong><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} /></label>
       <label className="setting-field" htmlFor="proxy-url"><strong className="setting-label">Proxy</strong><input id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label>
       <div className="setting-field setting-field-inline theme-setting-row"><strong className="setting-label" id="theme-label">Theme</strong><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div>
@@ -570,6 +657,12 @@ function errorMessage(cause: unknown) { return typeof cause === "string" ? cause
 function settingsEqual(left: SettingsValue, right: SettingsValue) { return left.shortcut === right.shortcut && left.theme === right.theme && left.proxyUrl === right.proxyUrl; }
 function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
+function formatProfileDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value)); }
+function cefrLabel(level: CefrLevel) { return level === "insufficient_evidence" ? "证据不足" : level; }
+function cefrDescription(level: CefrLevel) { const descriptions: Record<CefrLevel, string> = { A1: "入门", A2: "基础", B1: "中级", B2: "中高级", C1: "高级", C2: "精通", insufficient_evidence: "证据不足" }; return descriptions[level]; }
+function confidenceLabel(confidence: number) { return `置信度 ${Math.round(confidence * 100)}%`; }
+function conversationLabel(count: number) { return `基于 ${count} 次对话`; }
+function profileDimensionLabel(dimension: ProfileDimensionName) { return PROFILE_DIMENSIONS.find((item) => item.value === dimension)?.label ?? dimension; }
 function displayShortcut(value: string) { const names: Record<string, string> = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", super: "Win" }; return value.split("+").map((part) => names[part] ?? part.toUpperCase()).join(" + "); }
 function normalizeKey(key: string) { if (key === " ") return "space"; if (key === "Escape") return "esc"; if (key.length === 1 && /[a-z0-9]/i.test(key)) return key.toLowerCase(); if (/^F\d{1,2}$/i.test(key)) return key.toLowerCase(); const named: Record<string, string> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete", Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown" }; return named[key] ?? ""; }
 function validateProxy(value: string) {

@@ -10,6 +10,7 @@ Guidelines:
 - Choose `insufficient_evidence` when the available evidence supports a provisional assessment.
 - Make conservative changes and assign confidence that reflects the amount and quality of evidence.
 - Assess relevant dimensions among reading, vocabulary, grammar, and pragmatics.
+- Write the overall rationale, dimension evidence, observation descriptors, and observation evidence in concise Simplified Chinese.
 - Tie every observation to a recognizable CEFR-style descriptor and summarize its evidence compactly.
 - Focus the assessment on reading-related abilities demonstrated in this conversation.
 - Preserve uncertainty and ground personal learning observations in explicit conversation evidence.

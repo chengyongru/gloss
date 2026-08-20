@@ -117,6 +117,7 @@ pub fn run() {
             agent::list_history,
             agent::load_history,
             agent::delete_history,
+            profile::get_learner_profile,
             settings::get_settings,
             settings::update_settings,
         ])

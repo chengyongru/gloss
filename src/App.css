@@ -176,13 +176,16 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .history-delete { flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 9px; display: grid; place-items: center; color: var(--text-faint); background: transparent; }
 .history-delete:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
 
-.card.mode-settings { background: var(--surface-solid); backdrop-filter: none; }
-.card.mode-settings .card-header { border-bottom: 0; }
+.card.mode-settings, .card.mode-profile { background: var(--surface-solid); backdrop-filter: none; }
+.card.mode-settings .card-header, .card.mode-profile .card-header { border-bottom: 0; }
 .settings-panel { padding: 8px 24px 22px; display: flex; flex-direction: column; }
 .settings-fields { display: grid; gap: 23px; }
 .setting-field { min-width: 0; display: flex; flex-direction: column; gap: 9px; }
 .setting-field-inline { min-height: 40px; flex-direction: row; align-items: center; justify-content: space-between; gap: 18px; }
 .setting-label { color: var(--text); font-size: 13px; font-weight: 640; letter-spacing: -.01em; }
+.profile-setting-link { width: 100%; min-height: 44px; padding: 0 12px; border: 0; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; background: var(--surface-muted); color: var(--text); text-align: start; transition: background 130ms ease, transform 130ms ease; }
+.profile-setting-link:hover { background: var(--surface-soft); }
+.profile-setting-link:active { transform: scale(.96); }
 .shortcut-input, .network-input { width: 100%; height: 44px; padding: 0 13px; border: 0; border-radius: 12px; outline: 0; background: var(--surface-muted); color: var(--text); font: 12px "Cascadia Mono", Consolas, monospace; transition: background 140ms ease, box-shadow 140ms ease; }
 .shortcut-input:hover, .network-input:hover { background: var(--surface-soft); }
 .shortcut-input:focus-visible, .network-input:focus-visible { background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--text); }
@@ -216,6 +219,31 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .settings-save-status span { display: inline-flex; align-items: center; gap: 6px; }
 .settings-save-status .is-saving i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: breathe 1.2s ease-in-out infinite; }
 .settings-save-status .is-error { color: var(--danger); line-height: 1.4; }
+
+.profile-panel { padding: 8px 20px 28px; }
+.profile-summary { padding: 18px; border-radius: 16px; background: var(--surface-muted); }
+.profile-overview { display: flex; align-items: center; gap: 13px; }
+.profile-level { flex: 0 0 auto; width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--text); color: var(--surface-solid); font-size: 17px; font-weight: 720; letter-spacing: -.03em; }
+.profile-level.is-pending { background: var(--surface-soft); color: var(--text-muted); }
+.profile-overall-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.profile-overall-copy span { color: var(--text-faint); font-size: 10.5px; font-weight: 620; }
+.profile-overall-copy strong { font-size: 17px; font-weight: 690; letter-spacing: -.02em; }
+.profile-summary > p { margin: 15px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.profile-meta { margin-top: 13px; display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--text-faint); font-size: 10.5px; }
+.profile-section { margin-top: 26px; }
+.profile-section h2 { margin: 0 2px 11px; font-size: 12px; font-weight: 680; letter-spacing: -.01em; }
+.profile-dimensions { display: grid; gap: 8px; }
+.profile-dimension { padding: 13px 14px; border-radius: 13px; background: var(--surface-muted); }
+.profile-dimension-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.profile-dimension-heading strong { font-size: 12.5px; font-weight: 650; }
+.profile-dimension-heading span { color: var(--text-muted); font-size: 11px; font-weight: 620; }
+.profile-dimension small { display: block; margin-top: 4px; color: var(--text-faint); font-size: 10px; }
+.profile-dimension p { margin: 8px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
+.profile-observations { display: grid; gap: 22px; padding-inline: 2px; }
+.profile-observation-meta { margin-bottom: 5px; display: flex; gap: 7px; color: var(--text-faint); font-size: 10px; font-weight: 620; }
+.profile-observation > strong { display: block; font-size: 12.5px; line-height: 1.45; }
+.profile-observation > p { margin: 6px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
+.profile-observation > small { display: block; margin-top: 7px; color: var(--text-faint); font-size: 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .sr-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 

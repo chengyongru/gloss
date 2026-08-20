@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 const PROFILE_VERSION: u32 = 2;
 
@@ -176,16 +176,26 @@ pub fn read_for_prompt(state: &AppState) -> Result<Option<String>, String> {
         Err(message) if message == "missing" => return Ok(None),
         Err(message) => return Err(message),
     };
-    let public_profile = json!({
+    serde_json::to_string_pretty(&public_profile(&profile))
+        .map(Some)
+        .map_err(|error| format!("Could not encode the learner profile: {error}"))
+}
+
+#[tauri::command]
+pub fn get_learner_profile(state: State<'_, AppState>) -> Result<Value, String> {
+    let profile = load_or_default(&state)?;
+    Ok(public_profile(&profile))
+}
+
+fn public_profile(profile: &LearnerProfile) -> Value {
+    json!({
         "framework": "CEFR",
+        "updatedAt": profile.updated_at,
         "conversationsObserved": profile.conversations_observed,
         "overall": profile.overall,
         "dimensions": profile.dimensions,
         "recentObservations": profile.observations.iter().take(24).collect::<Vec<_>>(),
-    });
-    serde_json::to_string_pretty(&public_profile)
-        .map(Some)
-        .map_err(|error| format!("Could not encode the learner profile: {error}"))
+    })
 }
 
 fn load(state: &AppState) -> Result<LearnerProfile, String> {
@@ -437,5 +447,16 @@ mod tests {
         assert_eq!(profile.conversations_observed, 1);
         assert_eq!(profile.observations.len(), 1);
         assert_eq!(profile.observations[0].evidence_count, 2);
+    }
+
+    #[test]
+    fn public_profile_has_the_frontend_read_model() {
+        let profile = LearnerProfile::default();
+        let view = public_profile(&profile);
+        assert_eq!(view["framework"], "CEFR");
+        assert_eq!(view["conversationsObserved"], 0);
+        assert_eq!(view["overall"]["level"], "insufficient_evidence");
+        assert_eq!(view["dimensions"], json!([]));
+        assert_eq!(view["recentObservations"], json!([]));
     }
 }
