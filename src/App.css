@@ -67,6 +67,7 @@ button, select { cursor: pointer; }
 button:disabled { cursor: default; opacity: .46; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .shell { width: 100%; height: 100%; padding: 6px; color: var(--text); }
+.shell.is-card { padding: 0; }
 .toolbar, .card { border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); backdrop-filter: blur(22px) saturate(1.12); }
 
 .toolbar { height: 60px; border-radius: 18px; padding: 8px 8px 8px 10px; display: flex; align-items: center; gap: 8px; user-select: none; }
