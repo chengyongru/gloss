@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowLeft,
@@ -256,8 +257,16 @@ function App() {
 }
 
 function Toolbar({ selection, error, onAction, onSettings, onClose }: { selection: Selection | null; error: string | null; onAction: (action: Action) => void; onSettings: () => void; onClose: () => void }) {
+  function startToolbarDrag(event: MouseEvent<HTMLElement>) {
+    if (!isTauri || event.button !== 0) return;
+    const target = event.target as Element;
+    if (target.closest("button, input, a, [role='button']")) return;
+    event.preventDefault();
+    getCurrentWindow().startDragging().catch(() => undefined);
+  }
+
   return (
-    <section className="toolbar" aria-label="Text actions" data-tauri-drag-region>
+    <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
       <div className="toolbar-mark" aria-hidden="true"><Sparkles size={16} /></div>
       <p className={error ? "toolbar-error" : "selection-peek"} title={error ?? selection?.text}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
       <div className="toolbar-actions">
