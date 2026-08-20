@@ -24,6 +24,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./App.css";
+import glossLogo from "./assets/gloss-logo.png";
 import { remarkCjkStrongBoundaries } from "./markdown";
 
 type Action = "triage" | "translate";
@@ -291,7 +292,7 @@ function Toolbar({ selection, error, onAction, onSettings, onClose }: { selectio
 
   return (
     <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
-      <div className="toolbar-mark" aria-hidden="true"><Sparkles size={16} /></div>
+      <div className="toolbar-mark" aria-hidden="true"><img src={glossLogo} alt="" /></div>
       <p className={error ? "toolbar-error" : "selection-peek"} title={error ?? selection?.text}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
       <div className="toolbar-actions">
         <button className="action-button primary" onClick={() => onAction("triage")} disabled={!selection}><MessageCircleQuestion size={16} /><span>Triage</span></button>
@@ -308,8 +309,8 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
   return (
     <header className="card-header" data-tauri-drag-region>
       <div className="header-title">
-        {mode === "history" || mode === "settings" ? <button className="icon-button" aria-label="Back" onClick={onBack}><ArrowLeft size={17} /></button> : <span className="brand-glyph" aria-hidden="true">G</span>}
-        <div><strong>{title}</strong><span>{mode === "card" ? "English, made legible" : "Gloss"}</span></div>
+        {mode === "history" || mode === "settings" ? <button className="icon-button" aria-label="Back" onClick={onBack}><ArrowLeft size={17} /></button> : <span className="brand-glyph" aria-hidden="true"><img src={glossLogo} alt="" /></span>}
+        <div><strong>{title}</strong>{mode !== "card" && <span>Gloss</span>}</div>
       </div>
       <div className="header-actions">
         {mode === "card" && <><button className="icon-button" aria-label="Open history" onClick={onHistory} title="History"><Clock3 size={17} /></button><button className="icon-button" aria-label="Open settings" onClick={onSettings} title="Settings"><Settings size={17} /></button></>}

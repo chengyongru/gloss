@@ -74,7 +74,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .toolbar, .card { border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); backdrop-filter: blur(22px) saturate(1.12); }
 
 .toolbar { height: 60px; border-radius: 18px; padding: 8px 8px 8px 10px; display: flex; align-items: center; gap: 8px; user-select: none; }
-.toolbar-mark { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); }
+.toolbar-mark { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 10px; overflow: hidden; background: var(--accent-soft); }
+.toolbar-mark img, .brand-glyph img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .selection-peek, .toolbar-error { min-width: 0; flex: 1; margin: 0; color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toolbar-error { color: var(--danger); }
 .toolbar-actions { display: flex; gap: 5px; }
@@ -93,7 +94,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .header-title > div { min-width: 0; display: flex; flex-direction: column; }
 .header-title strong { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }
 .header-title span { margin-top: 1px; color: var(--text-faint); font-size: 10.5px; }
-.brand-glyph { width: 30px; height: 30px; border-radius: 10px; background: var(--text); color: var(--surface-solid) !important; display: grid; place-items: center; font: 600 16px/1 Georgia, serif; }
+.brand-glyph { width: 30px; height: 30px; border-radius: 10px; overflow: hidden; background: var(--surface-muted); }
 .header-actions { gap: 2px; }
 .result-scroll, .panel-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 .result-scroll { padding: 18px 24px 22px; scroll-behavior: smooth; }
