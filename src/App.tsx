@@ -349,8 +349,8 @@ function Toolbar({ selection, error, onAction, onHistory, onSettings, onClose }:
 
   return (
     <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
-      <button className="toolbar-mark" aria-label="Open history" title="History" onClick={onHistory}><img src={glossLogo} alt="" /></button>
-      <p className={error ? "toolbar-error" : "selection-peek"} title={error ?? selection?.text}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
+      <button className="toolbar-mark" aria-label="Open history" onClick={onHistory}><img src={glossLogo} alt="" /></button>
+      <p className={error ? "toolbar-error" : "selection-peek"}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
       <div className="toolbar-actions">
         <button className="action-button primary" onClick={() => onAction("triage")} disabled={!selection}><MessageCircleQuestion size={16} /><span>Triage</span></button>
         <button className="action-button" onClick={() => onAction("translate")} disabled={!selection}><Languages size={16} /><span>Translate</span></button>
@@ -370,7 +370,7 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
         <div><strong>{title}</strong>{mode !== "card" && mode !== "settings" && mode !== "profile" && <span>Gloss</span>}</div>
       </div>
       <div className="header-actions">
-        {mode === "card" && <><button className="icon-button" aria-label="Open history" onClick={onHistory} title="History"><Clock3 size={17} /></button><button className="icon-button" aria-label="Open settings" onClick={onSettings} title="Settings"><Settings size={17} /></button></>}
+        {mode === "card" && <><button className="icon-button" aria-label="Open history" onClick={onHistory}><Clock3 size={17} /></button><button className="icon-button" aria-label="Open settings" onClick={onSettings}><Settings size={17} /></button></>}
         <button className="icon-button" aria-label="Close Gloss" onClick={onClose}><X size={17} /></button>
       </div>
     </header>
