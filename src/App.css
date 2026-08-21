@@ -180,7 +180,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .card.mode-settings, .card.mode-profile { background: var(--surface-solid); backdrop-filter: none; }
 .card.mode-settings .card-header, .card.mode-profile .card-header { border-bottom: 0; }
 .settings-panel { padding: 4px 24px 16px; display: flex; flex-direction: column; }
-.settings-fields { display: grid; gap: 18px; }
+.settings-fields { display: grid; gap: 14px; }
 .setting-field { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .setting-field-inline { min-height: 42px; flex-direction: row; align-items: center; justify-content: space-between; gap: 18px; }
 .setting-label { color: var(--text); font-size: 13px; font-weight: 640; letter-spacing: -.01em; }
@@ -195,6 +195,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .network-input::placeholder { color: var(--text-faint); }
 .network-input[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
 .field-error { margin: -2px 0 0; color: var(--danger); font-size: 10.5px; line-height: 1.4; }
+.toggle-setting { cursor: pointer; }
+.toggle-input { position: relative; flex: 0 0 auto; width: 40px; height: 24px; margin: 0; border: 0; border-radius: 999px; appearance: none; background: var(--surface-soft); box-shadow: inset 0 0 0 1px var(--border); cursor: pointer; transition: background-color 130ms ease, box-shadow 130ms ease; }
+.toggle-input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-faint); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); transition: transform 130ms ease, background-color 130ms ease; }
+.toggle-input:checked { background: var(--text); box-shadow: none; }
+.toggle-input:checked::after { background: var(--surface-solid); transform: translateX(16px); }
 .theme-setting-row { position: relative; z-index: 2; }
 .theme-picker { position: relative; flex: 0 0 auto; }
 .theme-trigger { min-width: 94px; min-height: 36px; padding: 0 8px 0 12px; border: 0; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 11px; background: transparent; color: var(--text); font-size: 12px; font-weight: 560; text-align: left; touch-action: manipulation; }

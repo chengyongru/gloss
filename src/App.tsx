@@ -38,7 +38,7 @@ type OverlayState = { status: "idle" } | { status: "ready"; selection: Selection
 type Message = { id: string; turnId: string; role: "user" | "assistant"; content: string; timestamp: string; intent?: "explain_selection"; attemptId?: string };
 type Session = { sessionId: string; action: Action; selectedText: string; messages: Message[] };
 type SessionSummary = { sessionId: string; action: Action; preview: string; updatedAt: string };
-type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string };
+type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string; launchAtStartup: boolean };
 type SettingsSaveState = { status: "idle" | "saving" | "saved" } | { status: "error"; message: string };
 type AuthStatus = { status: "signed_out" } | { status: "connected"; expiresAtMs: number } | { status: "error"; message: string };
 type ProfileEstimate = { level: CefrLevel; confidence: number; rationale: string };
@@ -51,7 +51,7 @@ type AgentEvent =
   | { type: "completed"; sessionId: string; attemptId: string; session: Session }
   | { type: "failed"; sessionId: string; attemptId: string; message: string; partial: string; incomplete: boolean };
 
-const DEFAULT_SETTINGS: SettingsValue = { shortcut: "ctrl+alt+shift+t", theme: "system", proxyUrl: "" };
+const DEFAULT_SETTINGS: SettingsValue = { shortcut: "ctrl+alt+shift+t", theme: "system", proxyUrl: "", launchAtStartup: false };
 const isTauri = "__TAURI_INTERNALS__" in window;
 const DEMO_SESSION: Session = {
   sessionId: "preview",
@@ -638,6 +638,7 @@ function ThemePicker({ value, onChange }: { value: Theme; onChange: (theme: Them
 
 function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onSignIn, onSignOut }: SettingsProps) {
   function recordShortcut(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Tab") return;
     event.preventDefault();
     if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
     const modifiers = [event.ctrlKey && "ctrl", event.altKey && "alt", event.shiftKey && "shift", event.metaKey && "super"].filter(Boolean);
@@ -654,8 +655,9 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onS
       <div className="setting-field setting-field-inline account-setting"><span className="account-copy"><strong className="setting-label">ChatGPT</strong><span className={`connection-status is-${auth.status}`}><i aria-hidden="true" />{connectionLabel}</span></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div>
       <button className="profile-setting-link" type="button" onClick={onProfile}><strong className="setting-label">学习画像</strong><ChevronRight size={16} aria-hidden="true" /></button>
       <label className="setting-field" htmlFor="shortcut"><strong className="setting-label">Global shortcut</strong><input id="shortcut" className="shortcut-input" value={displayShortcut(value.shortcut)} onKeyDown={recordShortcut} onChange={() => undefined} /></label>
-      <label className="setting-field" htmlFor="proxy-url"><strong className="setting-label">Proxy</strong><input id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label>
+      <label className="setting-field setting-field-inline toggle-setting"><strong className="setting-label">Launch at startup</strong><input className="toggle-input" type="checkbox" checked={value.launchAtStartup} onChange={(event) => onChange({ ...value, launchAtStartup: event.currentTarget.checked })} /></label>
       <div className="setting-field setting-field-inline theme-setting-row"><strong className="setting-label" id="theme-label">Theme</strong><ThemePicker value={value.theme} onChange={(theme) => onChange({ ...value, theme })} /></div>
+      <label className="setting-field" htmlFor="proxy-url"><strong className="setting-label">Proxy</strong><input id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label>
     </div>
     <div className="settings-save-status" role="status" aria-live="polite">{saveState.status === "saving" ? <span className="is-saving"><i aria-hidden="true" />Saving…</span> : saveState.status === "saved" ? <span><Check size={13} aria-hidden="true" />Saved</span> : saveState.status === "error" ? <span className="is-error">{saveState.message}</span> : null}</div>
     {error && <p className="panel-error">{error}</p>}
@@ -663,7 +665,7 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onS
 }
 
 function errorMessage(cause: unknown) { return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "Something went wrong."; }
-function settingsEqual(left: SettingsValue, right: SettingsValue) { return left.shortcut === right.shortcut && left.theme === right.theme && left.proxyUrl === right.proxyUrl; }
+function settingsEqual(left: SettingsValue, right: SettingsValue) { return left.shortcut === right.shortcut && left.theme === right.theme && left.proxyUrl === right.proxyUrl && left.launchAtStartup === right.launchAtStartup; }
 function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatProfileDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value)); }

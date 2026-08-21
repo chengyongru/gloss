@@ -67,6 +67,10 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(shortcut_plugin)
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app

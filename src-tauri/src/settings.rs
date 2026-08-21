@@ -4,6 +4,7 @@ use crate::{
 };
 use std::fs;
 use tauri::{AppHandle, State};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub fn load(data_dir: &std::path::Path) -> Result<AppSettings, String> {
@@ -29,13 +30,31 @@ pub fn activate_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> 
         .map_err(|error| format!("{shortcut} is unavailable: {error}"))
 }
 
+fn set_launch_at_startup(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    result.map_err(|error| format!("Could not update launch at startup: {error}"))
+}
+
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
-    state
+pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Result<AppSettings, String> {
+    let enabled = launch_at_startup_enabled(&app)?;
+    let mut settings = state
         .settings
         .lock()
-        .map(|settings| settings.clone())
-        .map_err(|_| "The settings state is unavailable.".to_owned())
+        .map_err(|_| "The settings state is unavailable.".to_owned())?;
+    settings.launch_at_startup = enabled;
+    Ok(settings.clone())
+}
+
+fn launch_at_startup_enabled(app: &AppHandle) -> Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| format!("Could not read launch at startup: {error}"))
 }
 
 #[tauri::command]
@@ -48,15 +67,24 @@ pub fn update_settings(
         return Err("Choose at least one modifier and a key.".to_owned());
     }
     settings.proxy_url = network::normalize_proxy_url(&settings.proxy_url)?;
-    let old = state
+    let mut old = state
         .settings
         .lock()
         .map_err(|_| "The settings state is unavailable.".to_owned())?
         .clone();
+    old.launch_at_startup = launch_at_startup_enabled(&app)?;
     if settings.shortcut != old.shortcut
         && let Err(message) = activate_shortcut(&app, &settings.shortcut)
     {
         let _ = activate_shortcut(&app, &old.shortcut);
+        return Err(message);
+    }
+    let startup_changed = settings.launch_at_startup != old.launch_at_startup;
+    if startup_changed && let Err(message) = set_launch_at_startup(&app, settings.launch_at_startup)
+    {
+        if settings.shortcut != old.shortcut {
+            let _ = activate_shortcut(&app, &old.shortcut);
+        }
         return Err(message);
     }
     let payload = serde_json::to_vec_pretty(&settings)
@@ -65,6 +93,9 @@ pub fn update_settings(
     {
         if settings.shortcut != old.shortcut {
             let _ = activate_shortcut(&app, &old.shortcut);
+        }
+        if startup_changed {
+            let _ = set_launch_at_startup(&app, old.launch_at_startup);
         }
         return Err(message);
     }
@@ -84,6 +115,9 @@ pub fn load_and_activate(app: &AppHandle, state: &AppState) {
         let _ = activate_shortcut(app, DEFAULT_SHORTCUT);
         active.shortcut = DEFAULT_SHORTCUT.to_owned();
     }
+    if let Ok(enabled) = app.autolaunch().is_enabled() {
+        active.launch_at_startup = enabled;
+    }
     if let Ok(mut current) = state.settings.lock() {
         *current = active;
     }
@@ -100,10 +134,23 @@ mod tests {
         )
         .unwrap();
         assert!(settings.proxy_url.is_empty());
+        assert!(!settings.launch_at_startup);
         assert!(
             !serde_json::to_string(&settings)
                 .unwrap()
                 .contains("saveHistory")
         );
+    }
+
+    #[test]
+    fn launch_at_startup_defaults_off_and_round_trips() {
+        let mut settings = AppSettings::default();
+        assert!(!settings.launch_at_startup);
+        settings.launch_at_startup = true;
+
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let decoded: AppSettings = serde_json::from_str(&encoded).unwrap();
+        assert!(decoded.launch_at_startup);
+        assert!(encoded.contains(r#""launchAtStartup":true"#));
     }
 }

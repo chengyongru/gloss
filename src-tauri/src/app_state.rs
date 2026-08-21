@@ -12,6 +12,8 @@ pub struct AppSettings {
     pub theme: ThemePreference,
     #[serde(default)]
     pub proxy_url: String,
+    #[serde(default)]
+    pub launch_at_startup: bool,
 }
 
 impl Default for AppSettings {
@@ -20,6 +22,7 @@ impl Default for AppSettings {
             shortcut: DEFAULT_SHORTCUT.to_owned(),
             theme: ThemePreference::System,
             proxy_url: String::new(),
+            launch_at_startup: false,
         }
     }
 }
