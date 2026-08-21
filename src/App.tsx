@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -98,7 +98,6 @@ function App() {
   const [question, setQuestion] = useState("");
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
   const settingsSaveGeneration = useRef(0);
 
   const visibleMessages = useMemo(() => session?.messages.filter((_, index) => index > 0) ?? [], [session]);
@@ -202,7 +201,6 @@ function App() {
     }, delay);
     return () => window.clearTimeout(timer);
   }, [draftSettings, settings]);
-  useEffect(() => { if (busy) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [streamText, busy]);
   useEffect(() => {
     const preventBrowserMenu = (event: globalThis.MouseEvent) => event.preventDefault();
     window.addEventListener("contextmenu", preventBrowserMenu);
@@ -330,7 +328,7 @@ function App() {
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
           {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} saveState={settingsSaveState} onChange={setDraftSettings} onProfile={showProfile} onSignIn={signIn} onSignOut={signOut} />}
           {mode === "profile" && <ProfilePanel value={profile} loading={profileLoading} error={profileError} />}
-          {mode === "card" && <ResultPanel ref={scrollRef} session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onRetry={retry} onCopy={copyAnswer} />}
+          {mode === "card" && <ResultPanel session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onRetry={retry} onCopy={copyAnswer} />}
           <div className="sr-status" role="status" aria-live="polite">{notice || (busy ? "Gloss is thinking" : error ?? "")}</div>
         </section>
       )}
@@ -379,13 +377,22 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
 
 type ReadingSelection = { text: string; left: number; top: number; placement: "above" | "below" };
 type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copied: boolean; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onExplainSelection: (selectedText: string) => void; onRetry: () => void; onCopy: () => void };
-const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onExplainSelection, onRetry, onCopy }, ref) {
+const STREAM_END_TOLERANCE = 2;
+
+function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onExplainSelection, onRetry, onCopy }: ResultProps) {
   const scrollElement = useRef<HTMLDivElement | null>(null);
+  const followsStream = useRef(true);
   const popover = useRef<HTMLButtonElement | null>(null);
   const [readingSelection, setReadingSelection] = useState<ReadingSelection | null>(null);
   const messages = session?.messages.filter((_, index) => index > 0) ?? [];
   const hasAnswer = messages.some((message) => message.role === "assistant") || Boolean(streamText);
   const canExplain = session?.action === "triage" && hasAnswer && !busy;
+
+  useLayoutEffect(() => {
+    const element = scrollElement.current;
+    if (!busy || !followsStream.current || !element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [streamText, busy]);
 
   useEffect(() => {
     if (!readingSelection) return;
@@ -406,10 +413,12 @@ const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel
     };
   }, [readingSelection]);
 
-  function setScrollElement(node: HTMLDivElement | null) {
-    scrollElement.current = node;
-    if (typeof ref === "function") ref(node);
-    else if (ref) ref.current = node;
+  function handleResultScroll() {
+    setReadingSelection(null);
+    const element = scrollElement.current;
+    if (!element) return;
+    const distanceFromEnd = element.scrollHeight - element.clientHeight - element.scrollTop;
+    followsStream.current = distanceFromEnd <= STREAM_END_TOLERANCE;
   }
 
   function captureReadingSelection() {
@@ -451,7 +460,7 @@ const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel
   }
 
   return <>
-    <div className="result-scroll" ref={setScrollElement} onPointerUp={() => window.requestAnimationFrame(captureReadingSelection)} onKeyUp={captureReadingSelection} onScroll={() => setReadingSelection(null)}>
+    <div className="result-scroll" ref={scrollElement} onPointerUp={() => window.requestAnimationFrame(captureReadingSelection)} onKeyUp={captureReadingSelection} onScroll={handleResultScroll}>
       {(session?.selectedText || selection?.text) && <blockquote className="source-quote"><span>Selected text</span><p>{session?.selectedText || selection?.text}</p></blockquote>}
       {!hasAnswer && busy && <LoadingState />}
       <div className="conversation">
@@ -466,7 +475,7 @@ const ResultPanel = forwardRef<HTMLDivElement, ResultProps>(function ResultPanel
       {session?.action === "triage" && <form className="follow-up" onSubmit={onQuestionSubmit}><label htmlFor="follow-up" className="sr-only">Ask a follow-up</label><input id="follow-up" value={question} onChange={(event) => onQuestionChange(event.currentTarget.value)} placeholder="Ask about this text…" disabled={busy} autoComplete="off" /><button type="submit" aria-label="Send follow-up" disabled={busy || !question.trim()}><Send size={16} /></button></form>}
     </footer>}
   </>;
-});
+}
 
 function MarkdownAnswer({ content, streaming = false }: { content: string; streaming?: boolean }) {
   return <article className={`markdown-answer${streaming ? " is-streaming" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm, remarkCjkStrongBoundaries]}>{content}</ReactMarkdown>{streaming && <span className="stream-caret" aria-hidden="true" />}</article>;

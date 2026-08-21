@@ -100,7 +100,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .brand-glyph { width: 30px; height: 30px; border-radius: 10px; overflow: hidden; background: var(--surface-muted); }
 .header-actions { gap: 2px; }
 .result-scroll, .panel-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-.result-scroll { padding: 18px 24px 22px; scroll-behavior: smooth; }
+.result-scroll { padding: 18px 24px 22px; }
 .source-quote { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 4px 13px 13px 4px; background: var(--surface-muted); }
 .source-quote span { display: block; margin-bottom: 5px; color: var(--text-faint); font-size: 10px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
 .source-quote p { margin: 0; color: var(--text-muted); font: italic 13px/1.55 Georgia, "Times New Roman", serif; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
