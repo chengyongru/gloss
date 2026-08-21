@@ -92,7 +92,7 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 4. 用户选择 Triage 或 Translate 后，`agent.rs` 创建会话并组装 Responses 请求。
 5. `responses.rs` 通过事件流把增量结果发送给 React 界面。
 6. `sessions.rs` 将完整会话写入 JSONL。
-7. Triage 至少发生一次继续提问后，`profile.rs` 才会在后台评估并更新 CEFR 画像。
+7. Triage 发生继续提问、`Explain this` 或 `Got it` 学习信号后，`profile.rs` 会在后台评估并更新 CEFR 画像。
 
 ## Responses 接口与重试
 
@@ -104,7 +104,7 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 
 ```rust
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 3;
+pub const PROMPT_VERSION: u32 = 4;
 ```
 
 ## Prompt 模板
@@ -115,6 +115,7 @@ pub const PROMPT_VERSION: u32 = 3;
 - `triage.md`：首轮 Triage runtime context
 - `translate.md`：首轮 Translate runtime context
 - `explain-selection.md`：Triage 结果划词后的快捷解释 runtime context
+- `got-it.md`：Triage 结果划词后的已理解学习信号 runtime context
 - `learner-profile.md`：根据多轮 Triage 对话生成 CEFR 画像补丁
 
 首次启动时，Gloss 会把缺失的模板复制到：
@@ -123,7 +124,7 @@ pub const PROMPT_VERSION: u32 = 3;
 %APPDATA%\com.gloss.desktop\prompts\
 ```
 
-每次请求都会重新读取模板。首条用户消息由 action runtime context 与 JSON 编码后的选中文本组成；手动追问保持为普通用户消息；`Explain this` 消息作为带 `explain_selection` 意图的用户消息保存，并在请求时套用独立 runtime context。保存 Markdown 文件后，下一次请求会直接使用新内容。删除运行时模板并重启 Gloss，会恢复当前打包版本的默认文件。
+每次请求都会重新读取模板。首条用户消息由 action runtime context 与 JSON 编码后的选中文本组成；手动追问保持为普通用户消息；`Explain this` 和 `Got it` 分别作为带 `explain_selection`、`got_it` 意图的用户消息保存，并在请求时套用各自的 runtime context。保存 Markdown 文件后，下一次请求会直接使用新内容。删除运行时模板并重启 Gloss，会恢复当前打包版本的默认文件。
 
 若模板改动需要体现在新会话元数据和缓存键中，请同步递增 `src-tauri/src/sessions.rs` 内的 `PROMPT_VERSION`。
 
@@ -143,7 +144,7 @@ pub const PROMPT_VERSION: u32 = 3;
 
 - `oauth.json` 明文保存 OAuth 令牌；会话 JSONL 保存对话和请求元数据。
 - 每次会话更新都会写入对应的 JSONL；历史页面中的删除操作会移除该文件。
-- `learner-profile.json` 基于 Triage 后的多轮对话更新。初始选中文本用于提供上下文，英语水平证据取自用户在后续对话中的表达。
+- `learner-profile.json` 基于 Triage 后的追问、划词解释和已理解信号更新。初始选中文本用于提供上下文，英语水平证据取自用户在后续对话中的表达和显式学习反馈。
 
 ## 代理行为
 

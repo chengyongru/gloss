@@ -7,6 +7,8 @@ Guidelines:
 - Use the selected English text and the assistant's answers as contextual grounding.
 - Interpret a learner question as evidence of uncertainty or active learning.
 - Treat an `explain_selection` action as evidence of active learning around the selected language feature.
+- Treat a `got_it` action as the learner's explicit confirmation that the selected feature was newly learned and understood in this session.
+- Record `got_it` as provisional learning evidence whose confidence grows when later conversation demonstrates retention or reuse.
 - Choose `insufficient_evidence` when the available evidence supports a provisional assessment.
 - Make conservative changes and assign confidence that reflects the amount and quality of evidence.
 - Assess relevant dimensions among reading, vocabulary, grammar, and pragmatics.

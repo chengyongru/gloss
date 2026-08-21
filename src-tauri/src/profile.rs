@@ -1,7 +1,7 @@
 use crate::{
     app_state::AppState,
     prompts, responses,
-    sessions::{self, MODEL, MessageRole, SessionView},
+    sessions::{self, MODEL, MessageIntent, MessageRole, SessionView},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -122,52 +122,45 @@ struct PatchObservation {
 }
 
 pub fn queue_update(app: AppHandle, session: SessionView) {
+    tauri::async_runtime::spawn(async move {
+        let _ = update_now(app, session).await;
+    });
+}
+
+pub async fn update_now(app: AppHandle, session: SessionView) -> Result<(), String> {
     let user_messages = session
         .messages
         .iter()
         .filter(|message| message.role == MessageRole::User)
         .collect::<Vec<_>>();
     if user_messages.len() < 2 {
-        return;
+        return Ok(());
     }
     let Some(latest_turn_id) = user_messages.last().map(|message| message.turn_id.clone()) else {
-        return;
+        return Ok(());
     };
 
-    tauri::async_runtime::spawn(async move {
-        let state = app.state::<AppState>();
-        let _guard = state.profile_lock.lock().await;
-        let mut profile = match load_or_default(&state) {
-            Ok(profile) => profile,
-            Err(_) => return,
-        };
-        if profile.processed_turn_ids.contains(&latest_turn_id) {
-            return;
-        }
-        let request = match profile_request(&state, &profile, &session) {
-            Ok(request) => request,
-            Err(_) => return,
-        };
-        let response = match responses::stream_response(
-            &app,
-            &state,
-            "learner-profile",
-            &latest_turn_id,
-            &request,
-            false,
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(_) => return,
-        };
-        let patch = match serde_json::from_str::<ProfilePatch>(&response.text) {
-            Ok(patch) => patch,
-            Err(_) => return,
-        };
-        apply_patch(&mut profile, patch, &session.session_id, &latest_turn_id);
-        let _ = save(&state, &profile);
-    });
+    let state = app.state::<AppState>();
+    let _guard = state.profile_lock.lock().await;
+    let mut profile = load_or_default(&state)?;
+    if profile.processed_turn_ids.contains(&latest_turn_id) {
+        return Ok(());
+    }
+    let request = profile_request(&state, &profile, &session)?;
+    let response = responses::stream_response(
+        &app,
+        &state,
+        "learner-profile",
+        &latest_turn_id,
+        &request,
+        false,
+    )
+    .await
+    .map_err(|failure| failure.message)?;
+    let patch = serde_json::from_str::<ProfilePatch>(&response.text)
+        .map_err(|error| format!("Could not read the learner profile update: {error}"))?;
+    apply_patch(&mut profile, patch, &session.session_id, &latest_turn_id);
+    save(&state, &profile)
 }
 
 pub fn read_for_prompt(state: &AppState) -> Result<Option<String>, String> {
@@ -227,6 +220,7 @@ fn profile_request(
     profile: &LearnerProfile,
     session: &SessionView,
 ) -> Result<Value, String> {
+    let data_dir = state.data_dir()?;
     let initial_turn_id = session
         .messages
         .first()
@@ -236,13 +230,17 @@ fn profile_request(
         .iter()
         .filter(|message| Some(message.turn_id.as_str()) != initial_turn_id)
         .map(|message| {
-            json!({
+            let content = match message.intent {
+                Some(MessageIntent::GotIt) => prompts::got_it_context(&data_dir, &message.content)?,
+                _ => message.content.clone(),
+            };
+            Ok(json!({
                 "role": message.role,
-                "content": message.content,
+                "content": content,
                 "intent": message.intent,
-            })
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, String>>()?;
     let context = json!({
         "currentProfile": {
             "overall": profile.overall,
@@ -258,7 +256,7 @@ fn profile_request(
         "model": MODEL,
         "store": false,
         "stream": true,
-        "instructions": prompts::learner_profile(&state.data_dir()?)?,
+        "instructions": prompts::learner_profile(&data_dir)?,
         "input": [{
             "type": "message",
             "role": "user",
@@ -274,7 +272,7 @@ fn profile_request(
                 "schema": profile_patch_schema()
             }
         },
-        "prompt_cache_key": "gloss:cefr-learner-profile:v3"
+        "prompt_cache_key": "gloss:cefr-learner-profile:v4"
     }))
 }
 

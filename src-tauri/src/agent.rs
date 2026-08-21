@@ -100,17 +100,32 @@ pub async fn explain_selection(
 }
 
 #[tauri::command]
+pub async fn mark_got_it(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    selected_text: String,
+) -> Result<(), String> {
+    let session_id = active_session_id(&state)?;
+    let (view, persisted) = {
+        let mut sessions = state.sessions.lock().await;
+        let session = ensure_session_loaded(&state, &mut sessions, &session_id)?;
+        session.add_got_it(selected_text)?;
+        (session.view(), session.clone())
+    };
+    persist_session(&state, &persisted)?;
+    profile::update_now(app, view).await
+}
+
+#[tauri::command]
 pub async fn retry_turn(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let session_id = active_session_id(&state)?;
     let turn_id = {
         let mut sessions = state.sessions.lock().await;
         let session = ensure_session_loaded(&state, &mut sessions, &session_id)?;
         session
-            .messages
-            .iter()
-            .rev()
-            .find(|message| message.role == MessageRole::User)
-            .map(|message| message.turn_id.clone())
+            .attempts
+            .last()
+            .map(|attempt| attempt.turn_id.clone())
             .ok_or_else(|| "There is no turn to retry.".to_owned())?
     };
     begin_turn(app, session_id, turn_id).await

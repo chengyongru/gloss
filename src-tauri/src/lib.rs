@@ -116,6 +116,7 @@ pub fn run() {
             agent::start_action,
             agent::submit_follow_up,
             agent::explain_selection,
+            agent::mark_got_it,
             agent::retry_turn,
             agent::get_active_session,
             agent::list_history,

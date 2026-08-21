@@ -16,7 +16,7 @@ use windows::{
 };
 
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 3;
+pub const PROMPT_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -71,6 +71,7 @@ pub enum MessageRole {
 #[serde(rename_all = "snake_case")]
 pub enum MessageIntent {
     ExplainSelection,
+    GotIt,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -196,6 +197,10 @@ impl ConversationSession {
         self.add_user_turn(content, Some(MessageIntent::ExplainSelection))
     }
 
+    pub fn add_got_it(&mut self, content: String) -> Result<String, String> {
+        self.add_user_turn(content, Some(MessageIntent::GotIt))
+    }
+
     fn add_user_turn(
         &mut self,
         content: String,
@@ -244,6 +249,9 @@ impl ConversationSession {
                         "text": match message.intent {
                             Some(MessageIntent::ExplainSelection) => {
                                 prompts::explain_selection_context(data_dir, &message.content)?
+                            }
+                            Some(MessageIntent::GotIt) => {
+                                prompts::got_it_context(data_dir, &message.content)?
                             }
                             None if index == 0 => {
                                 self.metadata.action.runtime_context(data_dir, &self.metadata.selected_text)?
@@ -663,5 +671,22 @@ mod tests {
         let shortcut = body["input"][1]["content"][0]["text"].as_str().unwrap();
         assert!(shortcut.contains("passage the learner selected"));
         assert!(shortcut.contains("been awarded"));
+    }
+
+    #[test]
+    fn got_it_is_a_user_learning_signal_with_runtime_context() {
+        let (mut session, _) =
+            ConversationSession::new(SessionAction::Triage, "Selected text".to_owned());
+        session.add_got_it("been awarded".to_owned()).unwrap();
+        let data_dir = std::env::temp_dir().join(format!("gloss-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&data_dir).unwrap();
+        let body = session.request_body(&data_dir, None).unwrap();
+        fs::remove_dir_all(&data_dir).unwrap();
+
+        assert_eq!(session.messages[1].role, MessageRole::User);
+        assert_eq!(session.messages[1].intent, Some(MessageIntent::GotIt));
+        let signal = body["input"][1]["content"][0]["text"].as_str().unwrap();
+        assert!(signal.contains("newly learned and now understand"));
+        assert!(signal.contains("been awarded"));
     }
 }

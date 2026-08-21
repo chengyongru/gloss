@@ -35,7 +35,7 @@ type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | "insufficient_evidenc
 type ProfileDimensionName = "reading" | "vocabulary" | "grammar" | "pragmatics";
 type Selection = { text: string; anchor?: { left: number; top: number; width: number; height: number } };
 type OverlayState = { status: "idle" } | { status: "ready"; selection: Selection } | { status: "capture_error"; message: string };
-type Message = { id: string; turnId: string; role: "user" | "assistant"; content: string; timestamp: string; intent?: "explain_selection"; attemptId?: string };
+type Message = { id: string; turnId: string; role: "user" | "assistant"; content: string; timestamp: string; intent?: "explain_selection" | "got_it"; attemptId?: string };
 type Session = { sessionId: string; action: Action; selectedText: string; messages: Message[] };
 type SessionSummary = { sessionId: string; action: Action; preview: string; updatedAt: string };
 type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string; launchAtStartup: boolean };
@@ -256,6 +256,13 @@ function App() {
     catch (cause) { setBusy(false); setError(errorMessage(cause)); }
   }
 
+  async function markGotIt(selectedText: string) {
+    if (busy) return;
+    setError(null);
+    try { await invoke("mark_got_it", { selectedText }); }
+    catch (cause) { setError(errorMessage(cause)); throw cause; }
+  }
+
   async function retry() {
     setBusy(true); setError(null); setStreamText("");
     try { await invoke("retry_turn"); }
@@ -328,7 +335,7 @@ function App() {
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
           {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} saveState={settingsSaveState} onChange={setDraftSettings} onProfile={showProfile} onSignIn={signIn} onSignOut={signOut} />}
           {mode === "profile" && <ProfilePanel value={profile} loading={profileLoading} error={profileError} />}
-          {mode === "card" && <ResultPanel session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onRetry={retry} onCopy={copyAnswer} />}
+          {mode === "card" && <ResultPanel session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onGotIt={markGotIt} onRetry={retry} onCopy={copyAnswer} />}
           <div className="sr-status" role="status" aria-live="polite">{notice || (busy ? "Gloss is thinking" : error ?? "")}</div>
         </section>
       )}
@@ -375,24 +382,48 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
   );
 }
 
-type ReadingSelection = { text: string; left: number; top: number; placement: "above" | "below" };
-type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copied: boolean; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onExplainSelection: (selectedText: string) => void; onRetry: () => void; onCopy: () => void };
+type ReadingSelection = { text: string; range: Range; left: number; top: number; placement: "above" | "below" };
+type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copied: boolean; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onExplainSelection: (selectedText: string) => void; onGotIt: (selectedText: string) => Promise<void>; onRetry: () => void; onCopy: () => void };
 const STREAM_END_TOLERANCE = 2;
+const SELECTION_POPOVER_HALF_WIDTH = 112;
 
-function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onExplainSelection, onRetry, onCopy }: ResultProps) {
+function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onExplainSelection, onGotIt, onRetry, onCopy }: ResultProps) {
   const scrollElement = useRef<HTMLDivElement | null>(null);
   const followsStream = useRef(true);
-  const popover = useRef<HTMLButtonElement | null>(null);
+  const popover = useRef<HTMLDivElement | null>(null);
+  const processingHighlights = useRef<Highlight | null>(null);
+  const completedHighlights = useRef<Highlight | null>(null);
   const [readingSelection, setReadingSelection] = useState<ReadingSelection | null>(null);
-  const messages = session?.messages.filter((_, index) => index > 0) ?? [];
+  const messages = session?.messages.filter((message, index) => index > 0 && message.intent !== "got_it") ?? [];
   const hasAnswer = messages.some((message) => message.role === "assistant") || Boolean(streamText);
-  const canExplain = session?.action === "triage" && hasAnswer && !busy;
+  const canUseSelection = session?.action === "triage" && hasAnswer && !busy;
 
   useLayoutEffect(() => {
     const element = scrollElement.current;
     if (!busy || !followsStream.current || !element) return;
     element.scrollTop = element.scrollHeight;
   }, [streamText, busy]);
+
+  useEffect(() => {
+    if (!("highlights" in CSS) || typeof Highlight === "undefined") return;
+    const processing = new Highlight();
+    const completed = new Highlight();
+    processingHighlights.current = processing;
+    completedHighlights.current = completed;
+    CSS.highlights.set("gloss-got-it-processing", processing);
+    CSS.highlights.set("gloss-got-it-completed", completed);
+    return () => {
+      CSS.highlights.delete("gloss-got-it-processing");
+      CSS.highlights.delete("gloss-got-it-completed");
+      processingHighlights.current = null;
+      completedHighlights.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    processingHighlights.current?.clear();
+    completedHighlights.current?.clear();
+  }, [session?.sessionId]);
 
   useEffect(() => {
     if (!readingSelection) return;
@@ -422,7 +453,7 @@ function ResultPanel({ session, selection, streamText, busy, error, question, co
   }
 
   function captureReadingSelection() {
-    if (!canExplain) {
+    if (!canUseSelection) {
       setReadingSelection(null);
       return;
     }
@@ -445,7 +476,8 @@ function ResultPanel({ session, selection, streamText, busy, error, question, co
     const placement = rect.top >= 112 ? "above" : "below";
     setReadingSelection({
       text,
-      left: Math.min(window.innerWidth - 68, Math.max(68, rect.left + rect.width / 2)),
+      range: range.cloneRange(),
+      left: Math.min(window.innerWidth - SELECTION_POPOVER_HALF_WIDTH, Math.max(SELECTION_POPOVER_HALF_WIDTH, rect.left + rect.width / 2)),
       top: placement === "above" ? rect.top - 8 : rect.bottom + 8,
       placement,
     });
@@ -459,22 +491,50 @@ function ResultPanel({ session, selection, streamText, busy, error, question, co
     onExplainSelection(selectedText);
   }
 
+  async function markReadingSelectionGotIt() {
+    if (!readingSelection) return;
+    const selectedText = readingSelection.text;
+    const range = readingSelection.range.cloneRange();
+    setReadingSelection(null);
+    window.getSelection()?.removeAllRanges();
+    processingHighlights.current?.add(range);
+    try {
+      await onGotIt(selectedText);
+      processingHighlights.current?.delete(range);
+      completedHighlights.current?.add(range);
+    } catch {
+      processingHighlights.current?.delete(range);
+    }
+  }
+
   return <>
     <div className="result-scroll" ref={scrollElement} onPointerUp={() => window.requestAnimationFrame(captureReadingSelection)} onKeyUp={captureReadingSelection} onScroll={handleResultScroll}>
       {(session?.selectedText || selection?.text) && <blockquote className="source-quote"><span>Selected text</span><p>{session?.selectedText || selection?.text}</p></blockquote>}
       {!hasAnswer && busy && <LoadingState />}
       <div className="conversation">
-        {messages.map((message) => message.role === "user" ? message.intent === "explain_selection" ? <div className="user-question explain-question" key={message.id}><span><MessageCircleQuestion size={13} /> Explain this</span><q>{message.content}</q></div> : <div className="user-question" key={message.id}>{message.content}</div> : <MarkdownAnswer key={message.id} content={message.content} />)}
+        {messages.map((message) => message.role === "user" ? <UserMessage key={message.id} message={message} /> : <MarkdownAnswer key={message.id} content={message.content} />)}
         {streamText && <MarkdownAnswer content={streamText} streaming />}
       </div>
       {error && <div className="inline-error" role="alert"><div><strong>{streamText ? "Response interrupted" : "Couldn't complete this"}</strong><p>{error}</p></div><button className="secondary-button" onClick={onRetry} disabled={busy}><RefreshCw size={15} /> Retry</button></div>}
     </div>
-    {readingSelection && <button ref={popover} className={`selection-popover is-${readingSelection.placement}`} style={{ left: readingSelection.left, top: readingSelection.top }} onPointerDown={(event) => event.preventDefault()} onClick={explainReadingSelection}><MessageCircleQuestion size={14} /> Explain this</button>}
+    {readingSelection && <div ref={popover} className={`selection-popover is-${readingSelection.placement}`} role="group" aria-label="Selected text actions" style={{ left: readingSelection.left, top: readingSelection.top }} onPointerDown={(event) => event.preventDefault()}>
+      <button className="selection-action" type="button" onClick={explainReadingSelection}><MessageCircleQuestion size={14} aria-hidden="true" /> Explain this</button>
+      <button className="selection-action" type="button" onClick={markReadingSelectionGotIt}><Check size={14} aria-hidden="true" /> Got it</button>
+    </div>}
     {(hasAnswer || error) && <footer className="result-footer">
       <div className="answer-tools"><button className="icon-button" onClick={onCopy} aria-label="Copy latest answer">{copied ? <Check size={16} /> : <Copy size={16} />}</button><span>{copied ? "Copied" : busy ? "Writing…" : "Response complete"}</span></div>
       {session?.action === "triage" && <form className="follow-up" onSubmit={onQuestionSubmit}><label htmlFor="follow-up" className="sr-only">Ask a follow-up</label><input id="follow-up" value={question} onChange={(event) => onQuestionChange(event.currentTarget.value)} placeholder="Ask about this text…" disabled={busy} autoComplete="off" /><button type="submit" aria-label="Send follow-up" disabled={busy || !question.trim()}><Send size={16} /></button></form>}
     </footer>}
   </>;
+}
+
+function UserMessage({ message }: { message: Message }) {
+  if (message.intent === "got_it") return null;
+  if (!message.intent) return <div className="user-question">{message.content}</div>;
+  return <div className="user-question selection-message">
+    <span><MessageCircleQuestion size={13} aria-hidden="true" /> Explain this</span>
+    <q>{message.content}</q>
+  </div>;
 }
 
 function MarkdownAnswer({ content, streaming = false }: { content: string; streaming?: boolean }) {
@@ -499,7 +559,7 @@ const PROFILE_DIMENSIONS: ReadonlyArray<{ value: ProfileDimensionName; label: st
 function ProfilePanel({ value, loading, error }: { value: LearnerProfile | null; loading: boolean; error: string | null }) {
   if (loading) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>正在读取画像…</strong></div></div>;
   if (error) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>无法读取画像</strong><p>{error}</p></div></div>;
-  if (!value || value.conversationsObserved === 0) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>尚未形成画像</strong><p>在 Triage 后继续提问，Gloss 会据此更新画像。</p></div></div>;
+  if (!value || value.conversationsObserved === 0) return <div className="panel-scroll profile-panel"><div className="empty-state"><UserRound size={22} /><strong>尚未形成画像</strong><p>在 Triage 中继续提问或标记刚理解的内容，Gloss 会据此更新画像。</p></div></div>;
 
   const dimensions = new Map(value.dimensions.map((dimension) => [dimension.dimension, dimension]));
   const levelAvailable = value.overall.level !== "insufficient_evidence";

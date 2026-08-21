@@ -4,6 +4,7 @@ const SYSTEM_TEMPLATE: &str = include_str!("../prompts/system.md");
 const TRIAGE_TEMPLATE: &str = include_str!("../prompts/triage.md");
 const TRANSLATE_TEMPLATE: &str = include_str!("../prompts/translate.md");
 const EXPLAIN_SELECTION_TEMPLATE: &str = include_str!("../prompts/explain-selection.md");
+const GOT_IT_TEMPLATE: &str = include_str!("../prompts/got-it.md");
 const LEARNER_PROFILE_TEMPLATE: &str = include_str!("../prompts/learner-profile.md");
 pub fn ensure_editable_templates(data_dir: &Path) -> Result<(), String> {
     let prompt_dir = data_dir.join("prompts");
@@ -16,6 +17,7 @@ pub fn ensure_editable_templates(data_dir: &Path) -> Result<(), String> {
         &prompt_dir.join("explain-selection.md"),
         EXPLAIN_SELECTION_TEMPLATE,
     )?;
+    seed_if_missing(&prompt_dir.join("got-it.md"), GOT_IT_TEMPLATE)?;
     seed_if_missing(
         &prompt_dir.join("learner-profile.md"),
         LEARNER_PROFILE_TEMPLATE,
@@ -46,6 +48,10 @@ pub fn explain_selection_context(data_dir: &Path, selected_text: &str) -> Result
         EXPLAIN_SELECTION_TEMPLATE,
         selected_text,
     )
+}
+
+pub fn got_it_context(data_dir: &Path, selected_text: &str) -> Result<String, String> {
+    runtime_context(data_dir, "got-it.md", GOT_IT_TEMPLATE, selected_text)
 }
 
 pub fn learner_profile(data_dir: &Path) -> Result<String, String> {
@@ -104,5 +110,6 @@ mod tests {
         assert!(TRIAGE_TEMPLATE.contains("{{selected_text_json}}"));
         assert!(TRANSLATE_TEMPLATE.contains("{{selected_text_json}}"));
         assert!(EXPLAIN_SELECTION_TEMPLATE.contains("{{selected_text_json}}"));
+        assert!(GOT_IT_TEMPLATE.contains("{{selected_text_json}}"));
     }
 }
