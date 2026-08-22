@@ -1,6 +1,6 @@
 # Gloss
 
-Gloss 是 Windows 上的英文阅读助手。选中文本，按下快捷键，即可获得贴合语境的中文讲解或翻译，并围绕原文继续追问。
+Gloss 是 Windows 上的英文阅读助手，也支持自适应中英文双向翻译。选中文本，按下快捷键，即可获得贴合语境的讲解或翻译，并围绕原文继续追问。
 
 <p align="center">
   <img src="docs/screenshots/toolbar.png" width="720" alt="Gloss 浮动工具栏">
@@ -9,7 +9,7 @@ Gloss 是 Windows 上的英文阅读助手。选中文本，按下快捷键，�
 ## 阅读，不打断当前页面
 
 - **Triage**：理解原文，梳理值得关注的表达、句式与背景。
-- **Translate**：翻译成自然中文。
+- **Translate**：自动识别中文或英文，并翻译成另一种语言。
 - **继续追问**：直接提问，或选中回答中的片段快速解释。
 
 <table>
@@ -29,7 +29,7 @@ Gloss 是 Windows 上的英文阅读助手。选中文本，按下快捷键，�
 
 ## 使用
 
-1. 选中英文文本。
+1. 选中中文或英文文本。
 2. 按 `Ctrl + Alt + Shift + T` 唤出 Gloss。
 3. 选择 **Triage** 或 **Translate**。
 

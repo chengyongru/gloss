@@ -16,7 +16,7 @@ use windows::{
 };
 
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 4;
+pub const PROMPT_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -604,6 +604,21 @@ mod tests {
                 .contains("conversational learning agent")
         );
         assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn translate_request_uses_adaptive_chinese_english_context() {
+        let (session, _) =
+            ConversationSession::new(SessionAction::Translate, "这个功能很好用。".to_owned());
+        let data_dir = std::env::temp_dir().join(format!("gloss-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&data_dir).unwrap();
+        let body = session.request_body(&data_dir, None).unwrap();
+        fs::remove_dir_all(&data_dir).unwrap();
+
+        let initial = body["input"][0]["content"][0]["text"].as_str().unwrap();
+        assert!(initial.contains("predominantly Chinese"));
+        assert!(initial.contains("predominantly English"));
+        assert!(initial.contains("这个功能很好用。"));
     }
 
     #[test]

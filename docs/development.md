@@ -4,7 +4,7 @@
 
 ## 产品边界
 
-Gloss 是仅支持 Windows 的轻量阅读 Agent。它读取用户主动选中的文本，通过 ChatGPT Codex Responses 接口执行 Triage、Translate 和围绕原文的多轮对话。
+Gloss 是仅支持 Windows 的轻量阅读 Agent。它读取用户主动选中的文本，通过 ChatGPT Codex Responses 接口执行 Triage、自适应中英互译和围绕原文的多轮对话。
 
 ## 技术栈
 
@@ -104,7 +104,7 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 
 ```rust
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 4;
+pub const PROMPT_VERSION: u32 = 5;
 ```
 
 ## Prompt 模板
@@ -113,7 +113,7 @@ pub const PROMPT_VERSION: u32 = 4;
 
 - `system.md`：定义 Gloss 的身份、对话行为和学习画像使用方式
 - `triage.md`：首轮 Triage runtime context
-- `translate.md`：首轮 Translate runtime context
+- `translate.md`：首轮自适应中英互译 runtime context
 - `explain-selection.md`：Triage 结果划词后的快捷解释 runtime context
 - `got-it.md`：Triage 结果划词后的已理解学习信号 runtime context
 - `learner-profile.md`：根据多轮 Triage 对话生成 CEFR 画像补丁
@@ -124,7 +124,7 @@ pub const PROMPT_VERSION: u32 = 4;
 %APPDATA%\com.gloss.desktop\prompts\
 ```
 
-每次请求都会重新读取模板。首条用户消息由 action runtime context 与 JSON 编码后的选中文本组成；手动追问保持为普通用户消息；`Explain this` 和 `Got it` 分别作为带 `explain_selection`、`got_it` 意图的用户消息保存，并在请求时套用各自的 runtime context。保存 Markdown 文件后，下一次请求会直接使用新内容。删除运行时模板并重启 Gloss，会恢复当前打包版本的默认文件。
+每次请求都会重新读取模板。首条用户消息由 action runtime context 与 JSON 编码后的选中文本组成；Translate 会按主要语言自动选择中文→英文或英文→简体中文，不支持第三种目标语言；手动追问保持为普通用户消息；`Explain this` 和 `Got it` 分别作为带 `explain_selection`、`got_it` 意图的用户消息保存，并在请求时套用各自的 runtime context。保存 Markdown 文件后，下一次请求会直接使用新内容。删除运行时模板并重启 Gloss，会恢复当前打包版本的默认文件。应用升级时，未修改的旧版 Translate 模板会自动迁移，用户自定义模板则保持不变。
 
 若模板改动需要体现在新会话元数据和缓存键中，请同步递增 `src-tauri/src/sessions.rs` 内的 `PROMPT_VERSION`。
 
