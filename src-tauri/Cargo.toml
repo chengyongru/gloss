@@ -1,6 +1,6 @@
 [package]
 name = "gloss"
-version = "0.1.1"
+version = "0.1.2"
 description = "A focused Windows reading companion"
 authors = ["Gloss contributors"]
 edition = "2024"
