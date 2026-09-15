@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 const SYSTEM_TEMPLATE: &str = include_str!("../prompts/system.md");
 const TRIAGE_TEMPLATE: &str = include_str!("../prompts/triage.md");
 const TRANSLATE_TEMPLATE: &str = include_str!("../prompts/translate.md");
+const CORRECT_TEMPLATE: &str = include_str!("../prompts/correct.md");
 const LEGACY_TRANSLATE_TEMPLATE_V4: &str = r#"<runtime_context>
 Task: Translate the selected English text into natural, concise Simplified Chinese.
 
@@ -21,6 +22,7 @@ pub fn ensure_editable_templates(data_dir: &Path) -> Result<(), String> {
         .map_err(|error| format!("Could not create the prompt folder: {error}"))?;
     seed_if_missing(&prompt_dir.join("system.md"), SYSTEM_TEMPLATE)?;
     seed_if_missing(&prompt_dir.join("triage.md"), TRIAGE_TEMPLATE)?;
+    seed_if_missing(&prompt_dir.join("correct.md"), CORRECT_TEMPLATE)?;
     seed_or_migrate(
         &prompt_dir.join("translate.md"),
         TRANSLATE_TEMPLATE,
@@ -52,6 +54,10 @@ pub fn triage_context(data_dir: &Path, selected_text: &str) -> Result<String, St
 
 pub fn translate_context(data_dir: &Path, selected_text: &str) -> Result<String, String> {
     runtime_context(data_dir, "translate.md", TRANSLATE_TEMPLATE, selected_text)
+}
+
+pub fn correct_context(data_dir: &Path, selected_text: &str) -> Result<String, String> {
+    runtime_context(data_dir, "correct.md", CORRECT_TEMPLATE, selected_text)
 }
 
 pub fn explain_selection_context(data_dir: &Path, selected_text: &str) -> Result<String, String> {
@@ -137,6 +143,7 @@ mod tests {
         assert!(!SYSTEM_TEMPLATE.contains("{{selected_text_json}}"));
         assert!(TRIAGE_TEMPLATE.contains("{{selected_text_json}}"));
         assert!(TRANSLATE_TEMPLATE.contains("{{selected_text_json}}"));
+        assert!(CORRECT_TEMPLATE.contains("{{selected_text_json}}"));
         assert!(EXPLAIN_SELECTION_TEMPLATE.contains("{{selected_text_json}}"));
         assert!(GOT_IT_TEMPLATE.contains("{{selected_text_json}}"));
     }
@@ -146,6 +153,13 @@ mod tests {
         assert!(TRANSLATE_TEMPLATE.contains("predominantly Chinese"));
         assert!(TRANSLATE_TEMPLATE.contains("predominantly English"));
         assert!(TRANSLATE_TEMPLATE.contains("Never translate into a third language"));
+    }
+
+    #[test]
+    fn correct_template_preserves_voice_and_explains_naturalness() {
+        assert!(CORRECT_TEMPLATE.contains("smallest changes"));
+        assert!(CORRECT_TEMPLATE.contains("understandable but unnatural"));
+        assert!(CORRECT_TEMPLATE.contains("stylistic preference as a rule"));
     }
 
     #[test]

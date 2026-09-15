@@ -16,13 +16,14 @@ use windows::{
 };
 
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 5;
+pub const PROMPT_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionAction {
     Triage,
     Translate,
+    Correct,
 }
 
 impl SessionAction {
@@ -30,6 +31,7 @@ impl SessionAction {
         match self {
             Self::Triage => prompts::triage_context(data_dir, selected_text),
             Self::Translate => prompts::translate_context(data_dir, selected_text),
+            Self::Correct => prompts::correct_context(data_dir, selected_text),
         }
     }
 }
@@ -619,6 +621,23 @@ mod tests {
         assert!(initial.contains("predominantly Chinese"));
         assert!(initial.contains("predominantly English"));
         assert!(initial.contains("这个功能很好用。"));
+    }
+
+    #[test]
+    fn correct_request_preserves_meaning_and_explains_naturalness() {
+        let (session, _) = ConversationSession::new(
+            SessionAction::Correct,
+            "I very like this feature.".to_owned(),
+        );
+        let data_dir = std::env::temp_dir().join(format!("gloss-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&data_dir).unwrap();
+        let body = session.request_body(&data_dir, None).unwrap();
+        fs::remove_dir_all(&data_dir).unwrap();
+
+        let initial = body["input"][0]["content"][0]["text"].as_str().unwrap();
+        assert!(initial.contains("Corrected version"));
+        assert!(initial.contains("understandable but unnatural"));
+        assert!(initial.contains("I very like this feature."));
     }
 
     #[test]

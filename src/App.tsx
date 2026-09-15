@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -18,6 +18,7 @@ import {
   Send,
   Settings,
   Sparkles,
+  SpellCheck2,
   Trash2,
   UserRound,
   X,
@@ -28,7 +29,7 @@ import "./App.css";
 import glossLogo from "./assets/gloss-logo.png";
 import { remarkCjkStrongBoundaries } from "./markdown";
 
-type Action = "triage" | "translate";
+type Action = "triage" | "translate" | "correct";
 type Mode = "toolbar" | "card" | "history" | "settings" | "profile" | "signin";
 type Theme = "system" | "light" | "dark";
 type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | "insufficient_evidence";
@@ -52,6 +53,12 @@ type AgentEvent =
   | { type: "failed"; sessionId: string; attemptId: string; message: string; partial: string; incomplete: boolean };
 
 const DEFAULT_SETTINGS: SettingsValue = { shortcut: "ctrl+alt+shift+t", theme: "system", proxyUrl: "", launchAtStartup: false };
+const LAST_ACTION_KEY = "gloss:last-action";
+const ACTION_OPTIONS: ReadonlyArray<{ value: Action; label: string; description: string }> = [
+  { value: "triage", label: "Triage", description: "Understand meaning and tone" },
+  { value: "translate", label: "Translate", description: "Switch Chinese and English" },
+  { value: "correct", label: "Correct", description: "Fix grammar and wording" },
+];
 const isTauri = "__TAURI_INTERNALS__" in window;
 const DEMO_SESSION: Session = {
   sessionId: "preview",
@@ -88,6 +95,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthStatus>({ status: "signed_out" });
   const [pendingAction, setPendingAction] = useState<Action | null>(null);
+  const [toolbarAction, setToolbarAction] = useState<Action>(readLastAction);
   const [history, setHistory] = useState<SessionSummary[]>([]);
   const [settings, setSettings] = useState<SettingsValue>(DEFAULT_SETTINGS);
   const [draftSettings, setDraftSettings] = useState<SettingsValue>(DEFAULT_SETTINGS);
@@ -213,6 +221,8 @@ function App() {
   });
 
   async function runAction(action: Action) {
+    setToolbarAction(action);
+    rememberAction(action);
     setPendingAction(action);
     setError(null);
     if (auth.status !== "connected") {
@@ -327,7 +337,7 @@ function App() {
   return (
     <main className={`shell ${mode === "toolbar" ? "is-toolbar" : "is-card"}`} aria-label="Gloss">
       {mode === "toolbar" ? (
-        <Toolbar selection={selection} error={captureError} onAction={runAction} onHistory={showHistory} onSettings={showSettingsFromToolbar} onClose={close} />
+        <Toolbar selection={selection} error={captureError} action={toolbarAction} onAction={runAction} onHistory={showHistory} onSettings={showSettingsFromToolbar} onClose={close} />
       ) : (
         <section className={`card mode-${mode}`} aria-label="Gloss reading companion">
           <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={returnToToolbar} onHistory={showHistory} onSettings={showSettings} onClose={close} />
@@ -343,22 +353,34 @@ function App() {
   );
 }
 
-function Toolbar({ selection, error, onAction, onHistory, onSettings, onClose }: { selection: Selection | null; error: string | null; onAction: (action: Action) => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
+function Toolbar({ selection, error, action, onAction, onHistory, onSettings, onClose }: { selection: Selection | null; error: string | null; action: Action; onAction: (action: Action) => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
   function startToolbarDrag(event: MouseEvent<HTMLElement>) {
     if (!isTauri || event.button !== 0) return;
     const target = event.target as Element;
-    if (target.closest("button, input, a, [role='button']")) return;
+    if (target.closest("button, input, select, textarea, a, [role='button'], [data-no-drag]")) return;
     event.preventDefault();
     getCurrentWindow().startDragging().catch(() => undefined);
   }
+  function chooseAction(event: ChangeEvent<HTMLSelectElement>) {
+    onAction(event.currentTarget.value as Action);
+  }
+
+  const current = actionOption(action);
 
   return (
     <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
       <button className="toolbar-mark" aria-label="Open history" onClick={onHistory}><img src={glossLogo} alt="" /></button>
       <p className={error ? "toolbar-error" : "selection-peek"}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
       <div className="toolbar-actions">
-        <button className="action-button primary" onClick={() => onAction("triage")} disabled={!selection}><MessageCircleQuestion size={16} /><span>Triage</span></button>
-        <button className="action-button" onClick={() => onAction("translate")} disabled={!selection}><Languages size={16} /><span>Translate</span></button>
+        <div className={`action-split${selection ? "" : " is-disabled"}`} role="group" aria-label="Text action">
+          <button className="action-run" onClick={() => onAction(action)} disabled={!selection} aria-label={`Run ${current.label}`}><ActionIcon action={action} size={16} /><span>{current.label}</span></button>
+          <span className="action-picker" data-no-drag>
+            <select value={action} onChange={chooseAction} disabled={!selection} aria-label="Choose and run text action">
+              {ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label} — {option.description}</option>)}
+            </select>
+            <ChevronDown size={14} aria-hidden="true" />
+          </span>
+        </div>
       </div>
       <button className="icon-button compact" aria-label="Open settings" onClick={onSettings}><Settings size={15} /></button>
       <button className="icon-button compact" aria-label="Close Gloss" onClick={onClose}><X size={15} /></button>
@@ -367,7 +389,7 @@ function Toolbar({ selection, error, onAction, onHistory, onSettings, onClose }:
 }
 
 function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { mode: Mode; action: Action | null; onBack: () => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
-  const title = mode === "history" ? "History" : mode === "settings" ? "Settings" : mode === "profile" ? "学习画像" : mode === "signin" ? "Connect" : action === "translate" ? "Translate" : "Triage";
+  const title = mode === "history" ? "History" : mode === "settings" ? "Settings" : mode === "profile" ? "学习画像" : mode === "signin" ? "Connect" : action ? actionOption(action).label : "Triage";
   return (
     <header className="card-header" data-tauri-drag-region>
       <div className="header-title">
@@ -546,7 +568,7 @@ function SignInPanel({ onSignIn, error, notice }: { onSignIn: () => void; error:
 }
 
 function HistoryPanel({ items, error, onOpen, onDelete }: { items: SessionSummary[]; error: string | null; onOpen: (id: string) => void; onDelete: (event: MouseEvent, id: string) => void }) {
-  return <div className="panel-scroll history-panel"><p className="panel-intro">Your reading sessions stay on this PC.</p>{error && <p className="panel-error">{error}</p>}{!error && items.length === 0 && <div className="empty-state"><Clock3 size={22} /><strong>No history yet</strong><p>Your first Triage or Translate session will appear here.</p></div>}<div className="history-list">{items.map((item) => <div className="history-item" key={item.sessionId}><button className="history-open" onClick={() => onOpen(item.sessionId)}><span className={`history-icon ${item.action}`}>{item.action === "triage" ? <MessageCircleQuestion size={16} /> : <Languages size={16} />}</span><span className="history-copy"><strong>{item.preview}</strong><small>{formatTime(item.updatedAt)} · {capitalize(item.action)}</small></span></button><button className="history-delete" aria-label="Delete history item" onClick={(event) => onDelete(event, item.sessionId)}><Trash2 size={15} /></button></div>)}</div></div>;
+  return <div className="panel-scroll history-panel"><p className="panel-intro">Your sessions stay on this PC.</p>{error && <p className="panel-error">{error}</p>}{!error && items.length === 0 && <div className="empty-state"><Clock3 size={22} /><strong>No history yet</strong><p>Your first Triage, Translate, or Correct session will appear here.</p></div>}<div className="history-list">{items.map((item) => <div className="history-item" key={item.sessionId}><button className="history-open" onClick={() => onOpen(item.sessionId)}><span className={`history-icon ${item.action}`}><ActionIcon action={item.action} size={16} /></span><span className="history-copy"><strong>{item.preview}</strong><small>{formatTime(item.updatedAt)} · {actionOption(item.action).label}</small></span></button><button className="history-delete" aria-label="Delete history item" onClick={(event) => onDelete(event, item.sessionId)}><Trash2 size={15} /></button></div>)}</div></div>;
 }
 
 const PROFILE_DIMENSIONS: ReadonlyArray<{ value: ProfileDimensionName; label: string }> = [
@@ -725,8 +747,11 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onS
 }
 
 function errorMessage(cause: unknown) { return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : "Something went wrong."; }
+function actionOption(action: Action) { return ACTION_OPTIONS.find((option) => option.value === action) ?? ACTION_OPTIONS[0]; }
+function ActionIcon({ action, size }: { action: Action; size: number }) { return action === "triage" ? <MessageCircleQuestion size={size} aria-hidden="true" /> : action === "translate" ? <Languages size={size} aria-hidden="true" /> : <SpellCheck2 size={size} aria-hidden="true" />; }
+function rememberAction(action: Action) { try { window.localStorage.setItem(LAST_ACTION_KEY, action); } catch { /* The action still works when storage is unavailable. */ } }
+function readLastAction(): Action { try { const saved = window.localStorage.getItem(LAST_ACTION_KEY); return ACTION_OPTIONS.some((option) => option.value === saved) ? saved as Action : "triage"; } catch { return "triage"; } }
 function settingsEqual(left: SettingsValue, right: SettingsValue) { return left.shortcut === right.shortcut && left.theme === right.theme && left.proxyUrl === right.proxyUrl && left.launchAtStartup === right.launchAtStartup; }
-function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1); }
 function formatTime(value: string) { return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 function formatProfileDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(new Date(value)); }
 function cefrLabel(level: CefrLevel) { return level === "insufficient_evidence" ? "证据不足" : level; }

@@ -4,7 +4,7 @@
 
 ## 产品边界
 
-Gloss 是仅支持 Windows 的轻量阅读 Agent。它读取用户主动选中的文本，通过 ChatGPT Codex Responses 接口执行 Triage、自适应中英互译和围绕原文的多轮对话。
+Gloss 是仅支持 Windows 的轻量阅读与写作 Agent。它读取用户主动选中的文本，通过 ChatGPT Codex Responses 接口执行 Triage、自适应中英互译、英文修正和围绕原文的多轮对话。
 
 ## 技术栈
 
@@ -30,10 +30,10 @@ Gloss 是仅支持 Windows 的轻量阅读 Agent。它读取用户主动选中�
 | `src-tauri/src/network.rs` | HTTP 与 SOCKS 代理配置 |
 | `src-tauri/src/responses.rs` | Responses 流式请求、解析与重试 |
 | `src-tauri/src/sessions.rs` | 会话模型、请求体和 JSONL 持久化 |
-| `src-tauri/src/agent.rs` | Triage、Translate、继续提问和事件流 |
+| `src-tauri/src/agent.rs` | Triage、Translate、Correct、继续提问和事件流 |
 | `src-tauri/src/profile.rs` | CEFR 学习画像更新与合并 |
 | `src-tauri/src/prompts.rs` | System Prompt 与运行时上下文模板加载 |
-| `src-tauri/prompts/` | 随应用打包的默认 Prompt 模板 |
+| `src-tauri/prompts/` | 随应用打包的 Triage、Translate、Correct 等默认 Prompt 模板 |
 
 ## 开发环境
 
@@ -87,9 +87,9 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 ## 运行流程
 
 1. 全局快捷键触发选区捕获。
-2. `selection.rs` 依次检查焦点/鼠标元素的祖先，以及前台窗口中所有支持 UI Automation `TextPattern` 的文本提供者。UIA 无法暴露选区时，使用 `Ctrl+Insert` 复制语义读取文本，并通过 OLE 数据对象恢复原剪贴板。
+2. `selection.rs` 依次检查焦点元素和鼠标元素的祖先。UIA 无法暴露选区时，等待快捷键修饰键释放，再使用 `Ctrl+Insert` 复制语义读取文本，并通过 OLE 数据对象恢复原剪贴板。
 3. `overlay.rs` 在选区附近显示工具栏；无法取得可靠锚点时使用回退位置。
-4. 用户选择 Triage 或 Translate 后，`agent.rs` 创建会话并组装 Responses 请求。
+4. 用户选择 Triage、Translate 或 Correct 后，`agent.rs` 创建会话并组装 Responses 请求。
 5. `responses.rs` 通过事件流把增量结果发送给 React 界面。
 6. `sessions.rs` 将完整会话写入 JSONL。
 7. Triage 发生继续提问、`Explain this` 或 `Got it` 学习信号后，`profile.rs` 会在后台评估并更新 CEFR 画像。
@@ -104,7 +104,7 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 
 ```rust
 pub const MODEL: &str = "gpt-5.6-luna";
-pub const PROMPT_VERSION: u32 = 5;
+pub const PROMPT_VERSION: u32 = 6;
 ```
 
 ## Prompt 模板
@@ -114,6 +114,7 @@ pub const PROMPT_VERSION: u32 = 5;
 - `system.md`：定义 Gloss 的身份、对话行为和学习画像使用方式
 - `triage.md`：首轮 Triage runtime context
 - `translate.md`：首轮自适应中英互译 runtime context
+- `correct.md`：首轮英文语法与自然度修正 runtime context
 - `explain-selection.md`：Triage 结果划词后的快捷解释 runtime context
 - `got-it.md`：Triage 结果划词后的已理解学习信号 runtime context
 - `learner-profile.md`：根据多轮 Triage 对话生成 CEFR 画像补丁
