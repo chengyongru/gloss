@@ -41,6 +41,16 @@ fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_action_menu_open(app: tauri::AppHandle, open: bool) -> Result<String, String> {
+    overlay::set_action_menu_open(&app, open)
+}
+
+#[tauri::command]
+fn action_menu_placement(app: tauri::AppHandle) -> Result<String, String> {
+    overlay::action_menu_placement(&app)
+}
+
+#[tauri::command]
 fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
     overlay::expand_to_card(&app)?;
     let window = app
@@ -113,6 +123,8 @@ pub fn run() {
             expand_overlay,
             collapse_overlay,
             hide_overlay,
+            set_action_menu_open,
+            action_menu_placement,
             show_settings,
             oauth::start_oauth_login,
             oauth::get_auth_status,

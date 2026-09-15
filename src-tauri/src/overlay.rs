@@ -18,12 +18,15 @@ use windows::Win32::{
 
 const TOOLBAR_WIDTH: f64 = 440.0;
 const TOOLBAR_HEIGHT: f64 = 60.0;
+const ACTION_MENU_HEIGHT: f64 = 208.0;
 const CARD_WIDTH: f64 = 440.0;
 const CARD_HEIGHT: f64 = 540.0;
 const EDGE_GAP: f64 = 12.0;
 const ANCHOR_GAP: f64 = 8.0;
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(4);
 static CAPTURE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static ACTION_MENU_OPEN: AtomicBool = AtomicBool::new(false);
+static ACTION_MENU_ABOVE: AtomicBool = AtomicBool::new(false);
 
 struct CaptureGuard;
 
@@ -102,6 +105,8 @@ pub fn handle_global_shortcut(app: &AppHandle) {
 }
 
 pub fn show_toolbar(app: &AppHandle, anchor: Option<SelectionRect>) -> Result<(), String> {
+    ACTION_MENU_OPEN.store(false, Ordering::Release);
+    ACTION_MENU_ABOVE.store(false, Ordering::Release);
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?;
@@ -166,12 +171,127 @@ fn stabilize_toolbar_geometry(
     tauri::async_runtime::spawn(async move {
         for delay in [150, 200, 350] {
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-            if !window.is_visible().unwrap_or(false) {
+            if ACTION_MENU_OPEN.load(Ordering::Acquire) || !window.is_visible().unwrap_or(false) {
                 break;
             }
             let _ = set_toolbar_geometry(&window, width, height, x, y);
         }
     });
+}
+
+pub fn action_menu_placement(app: &AppHandle) -> Result<String, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?;
+    let scale = window
+        .scale_factor()
+        .map_err(|error| format!("Could not read the display scale: {error}"))?;
+    let expanded_height = (ACTION_MENU_HEIGHT * scale).round() as u32;
+    let position = window
+        .outer_position()
+        .map_err(|error| format!("Could not read the Gloss position: {error}"))?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| format!("Could not find the active display: {error}"))?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Could not find an active display.".to_owned())?;
+    let work = monitor.work_area();
+    let edge = (EDGE_GAP * scale).round() as i32;
+    let work_bottom = work.position.y + work.size.height as i32 - edge;
+    Ok(if position.y + expanded_height as i32 > work_bottom {
+        "above"
+    } else {
+        "below"
+    }
+    .to_owned())
+}
+
+pub fn set_action_menu_open(app: &AppHandle, open: bool) -> Result<String, String> {
+    diagnostics::record(format!("action menu resize requested open={open}"));
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?;
+    let scale = window
+        .scale_factor()
+        .map_err(|error| format!("Could not read the display scale: {error}"))?;
+    let toolbar_height = (TOOLBAR_HEIGHT * scale).round() as u32;
+    let expanded_height = (ACTION_MENU_HEIGHT * scale).round() as u32;
+    let size = window
+        .outer_size()
+        .map_err(|error| format!("Could not read the Gloss size: {error}"))?;
+
+    if !open {
+        ACTION_MENU_OPEN.store(false, Ordering::Release);
+        let above = ACTION_MENU_ABOVE.swap(false, Ordering::AcqRel);
+        if size.height.abs_diff(expanded_height) > 2 {
+            diagnostics::record("action menu already collapsed");
+            return Ok(if above { "above" } else { "below" }.to_owned());
+        }
+        let position = window
+            .outer_position()
+            .map_err(|error| format!("Could not read the Gloss position: {error}"))?;
+        window
+            .set_size(PhysicalSize::new(size.width, toolbar_height))
+            .map_err(|error| format!("Could not collapse the action menu: {error}"))?;
+        if above {
+            let y = position.y + expanded_height as i32 - toolbar_height as i32;
+            window
+                .set_position(PhysicalPosition::new(position.x, y))
+                .map_err(|error| format!("Could not restore the toolbar position: {error}"))?;
+        }
+        diagnostics::record("action menu collapsed");
+        return Ok(if above { "above" } else { "below" }.to_owned());
+    }
+
+    if ACTION_MENU_OPEN.load(Ordering::Acquire) {
+        return Ok(if ACTION_MENU_ABOVE.load(Ordering::Acquire) {
+            "above"
+        } else {
+            "below"
+        }
+        .to_owned());
+    }
+    if size.height.abs_diff(toolbar_height) > 2 {
+        return Err("Gloss cannot open the action menu in the current view.".to_owned());
+    }
+
+    let position = window
+        .outer_position()
+        .map_err(|error| format!("Could not read the Gloss position: {error}"))?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| format!("Could not find the active display: {error}"))?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Could not find an active display.".to_owned())?;
+    let work = monitor.work_area();
+    let edge = (EDGE_GAP * scale).round() as i32;
+    let work_bottom = work.position.y + work.size.height as i32 - edge;
+    let above = position.y + expanded_height as i32 > work_bottom;
+    let expanded_y = if above {
+        position.y - expanded_height as i32 + toolbar_height as i32
+    } else {
+        position.y
+    };
+
+    ACTION_MENU_OPEN.store(true, Ordering::Release);
+    ACTION_MENU_ABOVE.store(above, Ordering::Release);
+    let resized = if above {
+        window
+            .set_position(PhysicalPosition::new(position.x, expanded_y))
+            .and_then(|_| window.set_size(PhysicalSize::new(size.width, expanded_height)))
+    } else {
+        window.set_size(PhysicalSize::new(size.width, expanded_height))
+    };
+    if let Err(error) = resized {
+        ACTION_MENU_OPEN.store(false, Ordering::Release);
+        ACTION_MENU_ABOVE.store(false, Ordering::Release);
+        return Err(format!("Could not open the action menu: {error}"));
+    }
+    diagnostics::record(format!(
+        "action menu expanded placement={}",
+        if above { "above" } else { "below" }
+    ));
+    Ok(if above { "above" } else { "below" }.to_owned())
 }
 
 fn configure_as_tool_window(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -207,10 +327,12 @@ fn global_cursor_position() -> Option<(f64, f64)> {
 }
 
 pub fn expand_to_card(app: &AppHandle) -> Result<(), String> {
+    let menu_was_open = ACTION_MENU_OPEN.swap(false, Ordering::AcqRel);
+    let menu_was_above = ACTION_MENU_ABOVE.swap(false, Ordering::AcqRel);
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?;
-    let old_position = window
+    let mut old_position = window
         .outer_position()
         .map_err(|error| format!("Could not read the Gloss position: {error}"))?;
     let old_size = window
@@ -222,6 +344,11 @@ pub fn expand_to_card(app: &AppHandle) -> Result<(), String> {
         .or_else(|| window.primary_monitor().ok().flatten())
         .ok_or_else(|| "Could not find an active display.".to_owned())?;
     let scale = monitor.scale_factor();
+    let toolbar_height = (TOOLBAR_HEIGHT * scale).round() as u32;
+    let menu_height = (ACTION_MENU_HEIGHT * scale).round() as u32;
+    if menu_was_open && menu_was_above && old_size.height.abs_diff(menu_height) <= 2 {
+        old_position.y += menu_height as i32 - toolbar_height as i32;
+    }
     let work = monitor.work_area();
     let edge = (EDGE_GAP * scale).round() as i32;
     let max_width = work.size.width.saturating_sub((edge * 2).max(0) as u32);
@@ -244,6 +371,8 @@ pub fn expand_to_card(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn hide(app: &AppHandle) -> Result<(), String> {
+    ACTION_MENU_OPEN.store(false, Ordering::Release);
+    ACTION_MENU_ABOVE.store(false, Ordering::Release);
     app.get_webview_window("main")
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?
         .hide()

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -30,6 +30,7 @@ import glossLogo from "./assets/gloss-logo.png";
 import { remarkCjkStrongBoundaries } from "./markdown";
 
 type Action = "triage" | "translate" | "correct";
+type ActionMenuPlacement = "above" | "below";
 type Mode = "toolbar" | "card" | "history" | "settings" | "profile" | "signin";
 type Theme = "system" | "light" | "dark";
 type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | "insufficient_evidence";
@@ -215,7 +216,7 @@ function App() {
     return () => window.removeEventListener("contextmenu", preventBrowserMenu);
   }, []);
   useEffect(() => {
-    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") close(); };
+    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) close(); };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   });
@@ -234,6 +235,11 @@ function App() {
     setBusy(true);
     try { setSession(await invoke<Session>("start_action", { action })); }
     catch (cause) { setBusy(false); setError(errorMessage(cause)); }
+  }
+
+  function chooseToolbarAction(action: Action) {
+    setToolbarAction(action);
+    rememberAction(action);
   }
 
   async function signIn() {
@@ -337,7 +343,7 @@ function App() {
   return (
     <main className={`shell ${mode === "toolbar" ? "is-toolbar" : "is-card"}`} aria-label="Gloss">
       {mode === "toolbar" ? (
-        <Toolbar selection={selection} error={captureError} action={toolbarAction} onAction={runAction} onHistory={showHistory} onSettings={showSettingsFromToolbar} onClose={close} />
+        <Toolbar selection={selection} error={captureError} action={toolbarAction} onChooseAction={chooseToolbarAction} onAction={runAction} onHistory={showHistory} onSettings={showSettingsFromToolbar} onClose={close} />
       ) : (
         <section className={`card mode-${mode}`} aria-label="Gloss reading companion">
           <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={returnToToolbar} onHistory={showHistory} onSettings={showSettings} onClose={close} />
@@ -353,7 +359,39 @@ function App() {
   );
 }
 
-function Toolbar({ selection, error, action, onAction, onHistory, onSettings, onClose }: { selection: Selection | null; error: string | null; action: Action; onAction: (action: Action) => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
+function Toolbar({ selection, error, action, onChooseAction, onAction, onHistory, onSettings, onClose }: { selection: Selection | null; error: string | null; action: Action; onChooseAction: (action: Action) => void; onAction: (action: Action) => void; onHistory: () => void; onSettings: () => void; onClose: () => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPlacement, setMenuPlacement] = useState<ActionMenuPlacement>("below");
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const menuGeneration = useRef(0);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const dismissPointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      closeMenu(false);
+    };
+    const dismissEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeMenu(true);
+    };
+    document.addEventListener("pointerdown", dismissPointer, true);
+    window.addEventListener("keydown", dismissEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismissPointer, true);
+      window.removeEventListener("keydown", dismissEscape, true);
+    };
+  }, [menuOpen, menuPlacement]);
+
+  useEffect(() => {
+    if (menuOpen) closeMenu(false);
+  }, [selection?.text, error]);
+
   function startToolbarDrag(event: MouseEvent<HTMLElement>) {
     if (!isTauri || event.button !== 0) return;
     const target = event.target as Element;
@@ -361,30 +399,76 @@ function Toolbar({ selection, error, action, onAction, onHistory, onSettings, on
     event.preventDefault();
     getCurrentWindow().startDragging().catch(() => undefined);
   }
-  function chooseAction(event: ChangeEvent<HTMLSelectElement>) {
-    onAction(event.currentTarget.value as Action);
+
+  async function openMenu(focusIndex = Math.max(0, ACTION_OPTIONS.findIndex((option) => option.value === action))) {
+    const generation = ++menuGeneration.current;
+    const placement = isTauri
+      ? await invoke<ActionMenuPlacement>("action_menu_placement").catch(() => "below" as const)
+      : "below";
+    if (generation !== menuGeneration.current) return;
+    setMenuPlacement(placement);
+    setMenuOpen(true);
+    window.requestAnimationFrame(() => {
+      optionRefs.current[focusIndex]?.focus();
+      if (isTauri) void invoke("set_action_menu_open", { open: true }).catch(() => undefined);
+    });
+  }
+
+  function closeMenu(restoreFocus: boolean) {
+    ++menuGeneration.current;
+    setMenuOpen(false);
+    if (isTauri) void invoke("set_action_menu_open", { open: false }).catch(() => undefined);
+    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  function chooseAction(next: Action) {
+    onChooseAction(next);
+    closeMenu(true);
+  }
+
+  function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    void openMenu(event.key === "ArrowUp" ? ACTION_OPTIONS.length - 1 : 0);
+  }
+
+  function handleOptionKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let next = index;
+    if (event.key === "ArrowDown") next = (index + 1) % ACTION_OPTIONS.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + ACTION_OPTIONS.length) % ACTION_OPTIONS.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = ACTION_OPTIONS.length - 1;
+    else return;
+    event.preventDefault();
+    optionRefs.current[next]?.focus();
   }
 
   const current = actionOption(action);
 
   return (
-    <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
-      <button className="toolbar-mark" aria-label="Open history" onClick={onHistory}><img src={glossLogo} alt="" /></button>
-      <p className={error ? "toolbar-error" : "selection-peek"}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
-      <div className="toolbar-actions">
-        <div className={`action-split${selection ? "" : " is-disabled"}`} role="group" aria-label="Text action">
-          <button className="action-run" onClick={() => onAction(action)} disabled={!selection} aria-label={`Run ${current.label}`}><ActionIcon action={action} size={16} /><span>{current.label}</span></button>
-          <span className="action-picker" data-no-drag>
-            <select value={action} onChange={chooseAction} disabled={!selection} aria-label="Choose and run text action">
-              {ACTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label} — {option.description}</option>)}
-            </select>
-            <ChevronDown size={14} aria-hidden="true" />
-          </span>
+    <div className={`toolbar-frame menu-${menuPlacement}${menuOpen ? " is-menu-open" : ""}`}>
+      <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
+        <button className="toolbar-mark" aria-label="Open history" onClick={onHistory}><img src={glossLogo} alt="" /></button>
+        <p className={error ? "toolbar-error" : "selection-peek"}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
+        <div className="toolbar-actions">
+          <div className="action-split" role="group" aria-label="Text action">
+            <button className="action-run" onClick={() => onAction(action)} disabled={!selection} aria-label={`Run ${current.label}`}><ActionIcon action={action} size={16} /><span>{current.label}</span></button>
+            <button ref={triggerRef} className="action-picker" type="button" data-no-drag aria-label="Choose text action" aria-haspopup="menu" aria-expanded={menuOpen} aria-controls="action-menu" onClick={() => menuOpen ? closeMenu(false) : void openMenu()} onKeyDown={handleTriggerKeyDown}>
+              <ChevronDown size={14} aria-hidden="true" />
+            </button>
+            {menuOpen && <div ref={menuRef} id="action-menu" className="action-menu" role="menu" aria-label="Text actions">
+              {ACTION_OPTIONS.map((option, index) => <button key={option.value} ref={(node) => { optionRefs.current[index] = node; }} className={`action-menu-item${option.value === action ? " is-selected" : ""}`} type="button" role="menuitemradio" aria-checked={option.value === action} onClick={() => chooseAction(option.value)} onKeyDown={(event) => handleOptionKeyDown(event, index)}>
+                <span className="action-menu-icon"><ActionIcon action={option.value} size={16} /></span>
+                <span className="action-menu-copy"><strong>{option.label}</strong><small>{option.description}</small></span>
+                <Check className="action-menu-check" size={15} aria-hidden="true" />
+              </button>)}
+            </div>}
+          </div>
         </div>
-      </div>
-      <button className="icon-button compact" aria-label="Open settings" onClick={onSettings}><Settings size={15} /></button>
-      <button className="icon-button compact" aria-label="Close Gloss" onClick={onClose}><X size={15} /></button>
-    </section>
+        <button className="icon-button compact" aria-label="Open settings" onClick={onSettings}><Settings size={15} /></button>
+        <button className="icon-button compact" aria-label="Close Gloss" onClick={onClose}><X size={15} /></button>
+      </section>
+    </div>
   );
 }
 

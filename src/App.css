@@ -73,24 +73,34 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .shell.is-card .card, .shell.is-toolbar .toolbar { box-shadow: none; }
 .toolbar, .card { border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); backdrop-filter: blur(22px) saturate(1.12); }
 
-.toolbar { height: 60px; border-radius: 18px; padding: 8px 8px 8px 10px; display: flex; align-items: center; gap: 8px; user-select: none; }
+.toolbar-frame { position: relative; width: 100%; height: 100%; }
+.toolbar { position: absolute; inset-inline: 0; top: 0; width: 100%; height: 60px; border-radius: 18px; padding: 8px 8px 8px 10px; display: flex; align-items: center; gap: 8px; user-select: none; }
+.toolbar-frame.menu-above .toolbar { top: auto; bottom: 0; }
 .toolbar-mark { flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 10px; overflow: hidden; background: var(--accent-soft); transition: transform 130ms ease, opacity 130ms ease; }
 .toolbar-mark:hover { opacity: .84; }
 .toolbar-mark:active { transform: scale(.95); }
 .toolbar-mark img, .brand-glyph img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .selection-peek, .toolbar-error { min-width: 0; flex: 1; margin: 0; color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toolbar-error { color: var(--danger); }
-.toolbar-actions { flex: 0 0 auto; display: flex; margin-inline: 4px; }
+.toolbar-actions { position: relative; flex: 0 0 auto; display: flex; margin-inline: 4px; }
 .action-split { height: 36px; display: flex; align-items: stretch; border-radius: 11px; background: var(--text); color: var(--surface-solid); }
 .action-run { min-width: 80px; padding: 0 10px; border: 0; border-radius: 0; border-start-start-radius: 11px; border-end-start-radius: 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: inherit; font-size: 12.5px; font-weight: 600; transition: background-color 130ms ease, transform 130ms ease; }
-.action-run:hover:not(:disabled), .action-split:not(.is-disabled) .action-picker:hover { background: color-mix(in srgb, var(--surface-solid) 13%, transparent); }
+.action-run:hover:not(:disabled), .action-picker:hover { background: color-mix(in srgb, var(--surface-solid) 13%, transparent); }
 .action-run:active:not(:disabled) { transform: scale(.96); }
-.action-picker { position: relative; width: 30px; border-inline-start: 1px solid color-mix(in srgb, var(--surface-solid) 20%, transparent); border-radius: 0; border-start-end-radius: 11px; border-end-end-radius: 11px; display: grid; place-items: center; transition: background-color 130ms ease; }
-.action-split.is-disabled .action-picker { opacity: .46; }
-.action-picker select { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: 0; opacity: 0; cursor: pointer; }
-.action-picker select:disabled { cursor: default; }
-.action-picker:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.action-picker svg { pointer-events: none; }
+.action-picker { width: 30px; padding: 0; border: 0; border-inline-start: 1px solid color-mix(in srgb, var(--surface-solid) 20%, transparent); border-radius: 0; border-start-end-radius: 11px; border-end-end-radius: 11px; display: grid; place-items: center; background: transparent; color: inherit; transition: background-color 130ms ease; }
+.action-picker svg { pointer-events: none; transition: transform 140ms ease; }
+.action-picker[aria-expanded="true"] svg { transform: rotate(180deg); }
+.action-menu { position: absolute; z-index: 12; inset-inline-end: 0; top: 54px; width: 248px; padding: 5px; border: 1px solid var(--border); border-radius: 15px; display: grid; gap: 2px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); backdrop-filter: blur(22px) saturate(1.12); transform-origin: top right; animation: action-menu-in 130ms ease-out; }
+.toolbar-frame.menu-above .action-menu { top: auto; bottom: 54px; transform-origin: bottom right; animation-name: action-menu-in-above; }
+.action-menu-item { min-height: 42px; padding: 5px 7px; border: 0; border-radius: 10px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 18px; align-items: center; gap: 8px; background: transparent; color: inherit; text-align: start; }
+.action-menu-item:hover, .action-menu-item:focus-visible, .action-menu-item.is-selected { background: var(--surface-muted); }
+.action-menu-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.action-menu-icon { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--surface-soft); color: var(--text-muted); }
+.action-menu-copy { min-width: 0; display: grid; gap: 1px; }
+.action-menu-copy strong { font-size: 12.5px; font-weight: 650; }
+.action-menu-copy small { overflow: hidden; color: var(--text-faint); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.action-menu-check { visibility: hidden; color: var(--text-muted); }
+.action-menu-item.is-selected .action-menu-check { visibility: visible; }
 .icon-button { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9px; display: inline-grid; place-items: center; background: transparent; color: var(--text-muted); transition: color 130ms ease, background 130ms ease; }
 .icon-button:hover { color: var(--text); background: var(--surface-muted); }
 .icon-button.compact { width: 28px; height: 28px; }
@@ -265,6 +275,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 @keyframes blink { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
 @keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
 @keyframes shimmer { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes action-menu-in { from { opacity: 0; transform: translateY(-3px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes action-menu-in-above { from { opacity: 0; transform: translateY(3px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: no-preference) {
   .theme-trigger, .theme-option { transition: background 130ms ease, border-color 130ms ease, color 130ms ease; }
   .theme-trigger svg { transition: transform 150ms ease; }
