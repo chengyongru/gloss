@@ -3,8 +3,7 @@ use std::{ffi::c_void, mem::size_of, ptr, slice, thread, time::Duration};
 use uiautomation::{
     UIAutomation, UIElement,
     patterns::{UITextPattern, UITextRange},
-    types::{Point as UiPoint, TreeScope, UIProperty},
-    variants::Variant,
+    types::Point as UiPoint,
 };
 use windows::Win32::{
     Foundation::{HGLOBAL, HWND, POINT},
@@ -32,6 +31,8 @@ use windows::Win32::{
 };
 
 const MAX_ANCESTOR_DEPTH: usize = 64;
+const MODIFIER_RELEASE_ATTEMPTS: usize = 25;
+const MODIFIER_RELEASE_DELAY: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,7 +142,7 @@ pub fn capture_selected_text() -> Result<SelectionCapture, String> {
         return Err("Couldn't find the app containing the selection.".to_owned());
     }
 
-    let uia_capture = capture_with_uia(target).ok().flatten();
+    let uia_capture = capture_with_uia().ok().flatten();
     if let Some(selection) = uia_capture.as_ref()
         && !needs_copy_fallback(&selection.text)
     {
@@ -158,7 +159,7 @@ fn needs_copy_fallback(text: &str) -> bool {
         .any(|character| matches!(character, '\u{fffc}' | '\u{fffd}'))
 }
 
-fn capture_with_uia(target: HWND) -> Result<Option<SelectionCapture>, String> {
+fn capture_with_uia() -> Result<Option<SelectionCapture>, String> {
     // SAFETY: the blocking worker owns this COM initialization until this function returns.
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
         .ok()
@@ -174,10 +175,6 @@ fn capture_with_uia(target: HWND) -> Result<Option<SelectionCapture>, String> {
     if let Ok(focused) = automation.get_focused_element()
         && let Some(capture) = capture_from_ancestor_chain(focused, &walker)?
     {
-        return Ok(Some(capture));
-    }
-
-    if let Some(capture) = capture_from_window_subtree(&automation, target)? {
         return Ok(Some(capture));
     }
 
@@ -218,33 +215,6 @@ fn element_at_cursor(automation: &UIAutomation) -> Option<UIElement> {
         .ok()
 }
 
-fn capture_from_window_subtree(
-    automation: &UIAutomation,
-    target: HWND,
-) -> Result<Option<SelectionCapture>, String> {
-    let root = match automation.element_from_handle(target.into()) {
-        Ok(root) => root,
-        Err(_) => return Ok(None),
-    };
-    let condition = automation
-        .create_property_condition(
-            UIProperty::IsTextPatternAvailable,
-            Variant::from(true),
-            None,
-        )
-        .map_err(|error| format!("Could not search the foreground app for text: {error}"))?;
-    let providers = match root.find_all(TreeScope::Subtree, &condition) {
-        Ok(providers) => providers,
-        Err(_) => return Ok(None),
-    };
-    for provider in providers {
-        if let Some(capture) = capture_from_element(&provider)? {
-            return Ok(Some(capture));
-        }
-    }
-    Ok(None)
-}
-
 fn capture_with_copy_shortcut(target: HWND) -> Result<Option<SelectionCapture>, String> {
     // OLE clipboard operations require their own single-threaded apartment. The UIA MTA
     // above has already been released before this fallback starts.
@@ -278,16 +248,17 @@ fn capture_with_copy_shortcut(target: HWND) -> Result<Option<SelectionCapture>, 
 }
 
 fn send_ctrl_insert() -> Result<(), String> {
-    let mut inputs = Vec::with_capacity(8);
-    inputs.push(key_input(VK_CONTROL, false));
-    for modifier in [VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN] {
-        if unsafe { GetAsyncKeyState(i32::from(modifier.0)) } < 0 {
-            inputs.push(key_input(modifier, true));
+    for _ in 0..MODIFIER_RELEASE_ATTEMPTS {
+        if modifiers_released() {
+            break;
         }
+        thread::sleep(MODIFIER_RELEASE_DELAY);
     }
-    inputs.push(key_input(VK_INSERT, false));
-    inputs.push(key_input(VK_INSERT, true));
-    inputs.push(key_input(VK_CONTROL, true));
+    if !modifiers_released() {
+        return Err("Release the shortcut keys, then try again.".to_owned());
+    }
+
+    let inputs = ctrl_insert_inputs();
 
     let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
     if sent == inputs.len() as u32 {
@@ -295,6 +266,21 @@ fn send_ctrl_insert() -> Result<(), String> {
     } else {
         Err("Windows blocked the fallback copy shortcut.".to_owned())
     }
+}
+
+fn modifiers_released() -> bool {
+    [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
+        .into_iter()
+        .all(|modifier| unsafe { GetAsyncKeyState(i32::from(modifier.0)) } >= 0)
+}
+
+fn ctrl_insert_inputs() -> [INPUT; 4] {
+    [
+        key_input(VK_CONTROL, false),
+        key_input(VK_INSERT, false),
+        key_input(VK_INSERT, true),
+        key_input(VK_CONTROL, true),
+    ]
 }
 
 fn key_input(key: VIRTUAL_KEY, released: bool) -> INPUT {
@@ -468,6 +454,15 @@ mod tests {
             KEYBD_EVENT_FLAGS(0)
         );
         assert_eq!(unsafe { released.Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
+    }
+
+    #[test]
+    fn fallback_copy_does_not_synthesize_unrelated_modifier_releases() {
+        let inputs = ctrl_insert_inputs();
+        let keys = inputs.map(|input| unsafe { input.Anonymous.ki.wVk });
+        assert_eq!(keys, [VK_CONTROL, VK_INSERT, VK_INSERT, VK_CONTROL]);
+        assert_eq!(unsafe { inputs[2].Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
+        assert_eq!(unsafe { inputs[3].Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
     }
 
     #[test]

@@ -1,6 +1,11 @@
 use crate::{
     app_state::{AppState, OverlayState},
+    diagnostics,
     selection::{SelectionRect, capture_selected_text},
+};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize};
 use windows::Win32::{
@@ -17,17 +22,62 @@ const CARD_WIDTH: f64 = 440.0;
 const CARD_HEIGHT: f64 = 540.0;
 const EDGE_GAP: f64 = 12.0;
 const ANCHOR_GAP: f64 = 8.0;
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(4);
+static CAPTURE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+struct CaptureGuard;
+
+impl CaptureGuard {
+    fn acquire() -> Option<Self> {
+        CAPTURE_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for CaptureGuard {
+    fn drop(&mut self) {
+        CAPTURE_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
 
 pub fn handle_global_shortcut(app: &AppHandle) {
+    let Some(capture_guard) = CaptureGuard::acquire() else {
+        diagnostics::record("shortcut ignored while selection capture is already running");
+        return;
+    };
+    diagnostics::record("shortcut received; selection capture started");
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let capture = tauri::async_runtime::spawn_blocking(capture_selected_text).await;
+        let capture_task = tauri::async_runtime::spawn_blocking(move || {
+            let _capture_guard = capture_guard;
+            capture_selected_text()
+        });
+        let capture = tokio::time::timeout(CAPTURE_TIMEOUT, capture_task).await;
         let next = match capture {
-            Ok(Ok(selection)) => OverlayState::Ready { selection },
-            Ok(Err(message)) => OverlayState::CaptureError { message },
-            Err(error) => OverlayState::CaptureError {
-                message: format!("Windows UI Automation stopped unexpectedly: {error}"),
-            },
+            Ok(Ok(Ok(selection))) => {
+                diagnostics::record(format!(
+                    "selection capture completed chars={} anchored={}",
+                    selection.text.chars().count(),
+                    selection.anchor.is_some()
+                ));
+                OverlayState::Ready { selection }
+            }
+            Ok(Ok(Err(message))) => {
+                diagnostics::record(format!("selection capture failed: {message}"));
+                OverlayState::CaptureError { message }
+            }
+            Ok(Err(error)) => {
+                let message = format!("Windows UI Automation stopped unexpectedly: {error}");
+                diagnostics::record(format!("selection capture task failed: {message}"));
+                OverlayState::CaptureError { message }
+            }
+            Err(_) => {
+                let message = "Selection capture timed out. Try the shortcut again.".to_owned();
+                diagnostics::record("selection capture timed out");
+                OverlayState::CaptureError { message }
+            }
         };
 
         if let Some(state) = app.try_state::<AppState>() {
@@ -38,7 +88,11 @@ pub fn handle_global_shortcut(app: &AppHandle) {
             OverlayState::Ready { selection } => selection.anchor,
             _ => None,
         };
-        let _ = show_toolbar(&app, anchor);
+        if let Err(message) = show_toolbar(&app, anchor) {
+            diagnostics::record(format!("overlay show failed: {message}"));
+        } else {
+            diagnostics::record("overlay shown");
+        }
     });
 }
 
@@ -189,4 +243,17 @@ pub fn hide(app: &AppHandle) -> Result<(), String> {
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?
         .hide()
         .map_err(|error| format!("Could not hide Gloss: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_guard_rejects_overlapping_capture() {
+        let first = CaptureGuard::acquire().expect("first capture should acquire the guard");
+        assert!(CaptureGuard::acquire().is_none());
+        drop(first);
+        assert!(CaptureGuard::acquire().is_some());
+    }
 }

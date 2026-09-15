@@ -1,5 +1,6 @@
 mod agent;
 mod app_state;
+mod diagnostics;
 mod network;
 mod oauth;
 mod overlay;
@@ -35,6 +36,7 @@ fn collapse_overlay(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
 
 #[tauri::command]
 fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    diagnostics::record("overlay hide requested by UI");
     overlay::hide(&app)
 }
 
@@ -78,6 +80,7 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| format!("Could not resolve the Gloss data directory: {error}"))?;
             std::fs::create_dir_all(&data_dir)?;
+            diagnostics::init(&data_dir);
             prompts::ensure_editable_templates(&data_dir).map_err(std::io::Error::other)?;
             app.state::<AppState>()
                 .set_data_dir(data_dir)
@@ -98,6 +101,7 @@ pub fn run() {
                 if event.id() == "settings" {
                     let _ = show_settings(app.clone());
                 } else if event.id() == "quit" {
+                    diagnostics::record("app quit requested from tray");
                     app.exit(0);
                 }
             })
@@ -128,10 +132,13 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                diagnostics::record("native close requested; hiding overlay");
                 api.prevent_close();
                 let _ = window.hide();
             }
         })
         .run(tauri::generate_context!())
         .expect("error while running Gloss");
+
+    diagnostics::record("app event loop exited");
 }
