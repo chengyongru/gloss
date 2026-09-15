@@ -1,7 +1,7 @@
 [package]
 name = "gloss"
-version = "0.1.2"
-description = "A focused Windows reading companion"
+version = "0.1.3"
+description = "A focused Windows reading and writing companion"
 authors = ["Gloss contributors"]
 edition = "2024"
 license-file = "../LICENSE"
