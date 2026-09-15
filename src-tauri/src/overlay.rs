@@ -48,11 +48,16 @@ pub fn handle_global_shortcut(app: &AppHandle) {
         return;
     };
     diagnostics::record("shortcut received; selection capture started");
+    let clipboard_owner = app
+        .get_webview_window("main")
+        .and_then(|window| window.hwnd().ok())
+        .map(|hwnd| hwnd.0 as isize)
+        .unwrap_or_default();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let capture_task = tauri::async_runtime::spawn_blocking(move || {
             let _capture_guard = capture_guard;
-            capture_selected_text()
+            capture_selected_text(clipboard_owner)
         });
         let capture = tokio::time::timeout(CAPTURE_TIMEOUT, capture_task).await;
         let next = match capture {

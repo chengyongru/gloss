@@ -87,7 +87,7 @@ src-tauri\target\release\bundle\nsis\Gloss_<version>_x64-setup.exe
 ## 运行流程
 
 1. 全局快捷键触发选区捕获。
-2. `selection.rs` 依次检查焦点元素和鼠标元素的祖先。UIA 无法暴露选区时，等待快捷键修饰键释放，再使用 `Ctrl+Insert` 复制语义读取文本，并通过 OLE 数据对象恢复原剪贴板。
+2. `selection.rs` 依次检查焦点元素和鼠标元素的祖先。UIA 无法暴露选区时，等待快捷键修饰键释放，再使用 `Ctrl+Insert` 复制语义读取文本；写入临时内容前会克隆可用的剪贴板格式，并在读取后恢复。
 3. `overlay.rs` 在选区附近显示工具栏；无法取得可靠锚点时使用回退位置。
 4. 用户选择 Triage、Translate 或 Correct 后，`agent.rs` 创建会话并组装 Responses 请求。
 5. `responses.rs` 通过事件流把增量结果发送给 React 界面。

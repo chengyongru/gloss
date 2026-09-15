@@ -6,17 +6,18 @@ use uiautomation::{
     types::Point as UiPoint,
 };
 use windows::Win32::{
-    Foundation::{HGLOBAL, HWND, POINT},
+    Foundation::{HANDLE, HGLOBAL, HWND, POINT},
     System::{
-        Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize, IDataObject, SAFEARRAY},
+        Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize, SAFEARRAY},
         DataExchange::{
-            CloseClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
+            CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
+            GetClipboardSequenceNumber, OpenClipboard, SetClipboardData,
         },
-        Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+        Memory::{GLOBAL_ALLOC_FLAGS, GlobalLock, GlobalSize, GlobalUnlock},
         Ole::{
-            CF_UNICODETEXT, OleFlushClipboard, OleGetClipboard, OleInitialize, OleSetClipboard,
-            OleUninitialize, SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetDim,
-            SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayUnaccessData,
+            CF_UNICODETEXT, CLIPBOARD_FORMAT, OleDuplicateData, SafeArrayAccessData,
+            SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetLBound, SafeArrayGetUBound,
+            SafeArrayUnaccessData,
         },
     },
     UI::{
@@ -69,15 +70,6 @@ impl Drop for ComGuard {
     }
 }
 
-struct OleGuard;
-
-impl Drop for OleGuard {
-    fn drop(&mut self) {
-        // SAFETY: this balances the successful OleInitialize call on this thread.
-        unsafe { OleUninitialize() };
-    }
-}
-
 struct ClipboardOpenGuard;
 
 impl Drop for ClipboardOpenGuard {
@@ -87,28 +79,89 @@ impl Drop for ClipboardOpenGuard {
     }
 }
 
-struct ClipboardRestoreGuard {
-    snapshot: Option<IDataObject>,
+struct ClipboardFormat {
+    format: u32,
+    handle: HANDLE,
 }
 
-impl ClipboardRestoreGuard {
-    fn new(snapshot: IDataObject) -> Self {
-        Self {
-            snapshot: Some(snapshot),
+struct ClipboardSnapshot {
+    owner: isize,
+    formats: Vec<ClipboardFormat>,
+    restored: bool,
+}
+
+impl ClipboardSnapshot {
+    fn capture(owner: isize) -> Result<Self, String> {
+        let _clipboard = open_clipboard(None)
+            .ok_or_else(|| "Could not open the clipboard for preservation.".to_owned())?;
+        let mut formats = Vec::new();
+        let mut current = 0;
+        let mut available = 0;
+        loop {
+            let format = unsafe { EnumClipboardFormats(current) };
+            if format == 0 {
+                break;
+            }
+            available += 1;
+            current = format;
+            let Ok(source) = (unsafe { GetClipboardData(format) }) else {
+                continue;
+            };
+            let duplicate = unsafe {
+                OleDuplicateData(
+                    source,
+                    CLIPBOARD_FORMAT(format as u16),
+                    GLOBAL_ALLOC_FLAGS(0),
+                )
+            };
+            if !duplicate.is_invalid() {
+                formats.push(ClipboardFormat {
+                    format,
+                    handle: duplicate,
+                });
+            }
         }
+        if available > 0 && formats.is_empty() {
+            return Err("Could not preserve the current clipboard formats.".to_owned());
+        }
+        Ok(Self {
+            owner,
+            formats,
+            restored: false,
+        })
     }
 
     fn restore(&mut self) -> Result<(), String> {
-        let Some(snapshot) = self.snapshot.take() else {
+        if self.restored {
             return Ok(());
-        };
-        retry_clipboard_operation(|| unsafe { OleSetClipboard(&snapshot) })
-            .and_then(|_| retry_clipboard_operation(|| unsafe { OleFlushClipboard() }))
-            .map_err(|error| format!("Could not restore the clipboard: {error}"))
+        }
+        let owner = HWND(self.owner as *mut c_void);
+        let _clipboard = open_clipboard(Some(owner))
+            .ok_or_else(|| "Could not reopen the clipboard for restoration.".to_owned())?;
+        unsafe { EmptyClipboard() }
+            .map_err(|error| format!("Could not clear the temporary clipboard: {error}"))?;
+
+        let mut failed = 0;
+        for item in &mut self.formats {
+            if item.handle.is_invalid() {
+                continue;
+            }
+            if unsafe { SetClipboardData(item.format, Some(item.handle)) }.is_ok() {
+                item.handle = HANDLE::default();
+            } else {
+                failed += 1;
+            }
+        }
+        self.restored = true;
+        if failed == 0 {
+            Ok(())
+        } else {
+            Err(format!("Could not restore {failed} clipboard format(s)."))
+        }
     }
 }
 
-impl Drop for ClipboardRestoreGuard {
+impl Drop for ClipboardSnapshot {
     fn drop(&mut self) {
         let _ = self.restore();
     }
@@ -136,7 +189,7 @@ impl Drop for SafeArrayAccessGuard {
     }
 }
 
-pub fn capture_selected_text() -> Result<SelectionCapture, String> {
+pub fn capture_selected_text(clipboard_owner: isize) -> Result<SelectionCapture, String> {
     let target = unsafe { GetForegroundWindow() };
     if target.0.is_null() {
         return Err("Couldn't find the app containing the selection.".to_owned());
@@ -149,7 +202,7 @@ pub fn capture_selected_text() -> Result<SelectionCapture, String> {
         return Ok(selection.clone());
     }
 
-    capture_with_copy_shortcut(target)?
+    capture_with_copy_shortcut(target, clipboard_owner)?
         .or(uia_capture)
         .ok_or_else(|| "Couldn't read the selected text in this app.".to_owned())
 }
@@ -215,19 +268,18 @@ fn element_at_cursor(automation: &UIAutomation) -> Option<UIElement> {
         .ok()
 }
 
-fn capture_with_copy_shortcut(target: HWND) -> Result<Option<SelectionCapture>, String> {
-    // OLE clipboard operations require their own single-threaded apartment. The UIA MTA
-    // above has already been released before this fallback starts.
-    unsafe { OleInitialize(None) }
-        .map_err(|error| format!("Could not initialize clipboard capture: {error}"))?;
-    let _ole = OleGuard;
-    let snapshot = retry_clipboard_operation(|| unsafe { OleGetClipboard() })
-        .map_err(|error| format!("Could not preserve the clipboard: {error}"))?;
-    let mut restore = ClipboardRestoreGuard::new(snapshot);
+fn capture_with_copy_shortcut(
+    target: HWND,
+    clipboard_owner: isize,
+) -> Result<Option<SelectionCapture>, String> {
+    if clipboard_owner == 0 {
+        return Err("The Gloss window is unavailable for clipboard capture.".to_owned());
+    }
+    let mut snapshot = ClipboardSnapshot::capture(clipboard_owner)?;
     let sequence = unsafe { GetClipboardSequenceNumber() };
 
     if unsafe { GetForegroundWindow() } != target {
-        restore.restore()?;
+        snapshot.restore()?;
         return Ok(None);
     }
     send_ctrl_insert()?;
@@ -240,7 +292,7 @@ fn capture_with_copy_shortcut(target: HWND) -> Result<Option<SelectionCapture>, 
             break;
         }
     }
-    restore.restore()?;
+    snapshot.restore()?;
 
     Ok(text
         .filter(|value| !value.trim().is_empty())
@@ -303,7 +355,7 @@ fn key_input(key: VIRTUAL_KEY, released: bool) -> INPUT {
 }
 
 fn clipboard_text() -> Option<String> {
-    let _clipboard = open_clipboard()?;
+    let _clipboard = open_clipboard(None)?;
     let handle = unsafe { GetClipboardData(CF_UNICODETEXT.0.into()) }.ok()?;
     let global = HGLOBAL(handle.0);
     let byte_len = unsafe { GlobalSize(global) };
@@ -324,28 +376,14 @@ fn clipboard_text() -> Option<String> {
     Some(text)
 }
 
-fn open_clipboard() -> Option<ClipboardOpenGuard> {
+fn open_clipboard(owner: Option<HWND>) -> Option<ClipboardOpenGuard> {
     for _ in 0..8 {
-        if unsafe { OpenClipboard(None) }.is_ok() {
+        if unsafe { OpenClipboard(owner) }.is_ok() {
             return Some(ClipboardOpenGuard);
         }
         thread::sleep(Duration::from_millis(10));
     }
     None
-}
-
-fn retry_clipboard_operation<T>(
-    mut operation: impl FnMut() -> windows::core::Result<T>,
-) -> windows::core::Result<T> {
-    let mut last_error = None;
-    for _ in 0..8 {
-        match operation() {
-            Ok(value) => return Ok(value),
-            Err(error) => last_error = Some(error),
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    Err(last_error.unwrap_or_else(windows::core::Error::from_thread))
 }
 
 fn capture_from_element(element: &UIElement) -> Result<Option<SelectionCapture>, String> {
@@ -463,6 +501,12 @@ mod tests {
         assert_eq!(keys, [VK_CONTROL, VK_INSERT, VK_INSERT, VK_CONTROL]);
         assert_eq!(unsafe { inputs[2].Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
         assert_eq!(unsafe { inputs[3].Anonymous.ki.dwFlags }, KEYEVENTF_KEYUP);
+    }
+
+    #[test]
+    fn clipboard_fallback_requires_an_owner_window() {
+        let error = capture_with_copy_shortcut(HWND(ptr::null_mut()), 0).unwrap_err();
+        assert!(error.contains("Gloss window"));
     }
 
     #[test]
