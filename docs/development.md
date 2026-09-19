@@ -123,6 +123,19 @@ pnpm tauri build --bundles app
 
 Mac 配置默认使用 ad-hoc 签名，供本地构建和自用；构建后可用 `codesign --verify --deep --strict` 检查应用包。正式分发时按 [Tauri 签名说明](https://v2.tauri.app/distribute/sign/macos/) 配置发布者的签名身份与公证。重新构建后仍应验证已授予的辅助功能权限是否有效。
 
+### macOS 更新后已授权却仍无法取词
+
+当前 ad-hoc 签名的身份要求绑定应用的代码哈希。更新后，辅助功能开关可能仍为开，但允许记录保存的是旧包签名；切换开关和重启未必更新这个绑定。2026-09-19 已实际复现并验证以下恢复步骤：
+
+1. 先查看 `~/Library/Application Support/com.gloss.desktop/gloss.log`。若错误为 `Gloss needs Accessibility permission ...`，失败发生在读取选区之前，先处理授权；若已出现 `selection capture completed`，则沿后续动作或请求链路排查。
+2. 在“系统设置 → 隐私与安全性 → 辅助功能”选中 Gloss，用减号移除旧条目。
+3. 用加号添加固定安装位置中的当前 `Gloss.app`，开启权限，按系统要求完成验证。
+4. 回到原应用选中文字并按全局快捷键，确认工具栏读到文本，且日志出现 `selection capture completed`。开关为开、重启成功和构建成功都不能单独代替取词验收。
+
+本次移除并重新添加后，授权记录的代码要求与当前包一致，实际快捷键捕获 87 个字符，用户确认修复。无需修改选区读取或复制回退逻辑。界面须保留具体失败原因及完整说明入口，不能把权限、超时等所有错误都显示成 `No readable selection`。
+
+本地安装完成后，注销并清理可重新生成的构建目录 `.app`；需要保留回退版本时使用 ZIP 等压缩档，避免多个同名应用被系统注册。公开安装包、源码与用户数据无需因此删除。
+
 ## 运行流程
 
 1. 全局快捷键触发选区捕获。

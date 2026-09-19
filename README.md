@@ -29,7 +29,7 @@ Gloss 是英文阅读与写作助手，也支持自适应中英文双向翻译�
 
 支持 Windows 10/11。前往 [Releases](../../releases) 下载 Windows x64 安装程序，并使用可访问 Codex 的 ChatGPT 账号登录。
 
-macOS 暂需按照[开发文档](docs/development.md#构建发布版本)在 Mac 上自行构建，将 `Gloss.app` 放在固定位置后启动。在系统设置的“隐私与安全性 → 辅助功能”中允许 Gloss 读取选中文字；重新构建后如果取词提示无权限，请重新检查该授权。已在 Apple Silicon / macOS 26.4 上完成 Chrome 和 Zotero 核心流程的手工验证，具体范围见[验证记录](docs/development.md#macos-验证记录)。
+macOS 暂需按照[开发文档](docs/development.md#构建发布版本)在 Mac 上自行构建，将 `Gloss.app` 放在固定位置后启动。在系统设置的“隐私与安全性 → 辅助功能”中允许 Gloss 读取选中文字。更新后若开关已打开却仍提示无权限，请从该列表移除 Gloss，再添加固定安装位置中的当前 `Gloss.app` 并开启权限；仅切换开关可能保留旧包的签名记录。已在 Apple Silicon / macOS 26.4 上完成 Chrome 和 Zotero 核心流程的手工验证，具体范围见[验证记录](docs/development.md#macos-验证记录)。
 
 ## 使用
 
