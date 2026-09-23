@@ -3,7 +3,7 @@
 Gloss 是 Windows 上的英文阅读与写作助手，也支持自适应中英文双向翻译。选中文本，按下快捷键，即可理解、翻译或修正表达。
 
 <p align="center">
-  <img src="docs/screenshots/toolbar.png" width="720" alt="Gloss 浮动工具栏">
+  <img src="docs/screenshots/toolbar.png" width="440" alt="Gloss 圆角浮动工具栏，包含 Triage 主按钮、模式选择和设置入口">
 </p>
 
 ## 阅读，不打断当前页面
@@ -12,11 +12,12 @@ Gloss 是 Windows 上的英文阅读与写作助手，也支持自适应中英�
 - **Translate**：自动识别中文或英文，并翻译成另一种语言。
 - **Correct**：修正英文语法和不自然的表达，同时保留原意与语气。
 - **继续追问**：直接提问，或选中回答中的片段快速解释。
+- **学习画像**：根据 Triage 中的追问、划词解释和已理解标记更新 CEFR 画像，可在 Settings 中查看。
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/triage.png" alt="Gloss Triage 界面"></td>
-    <td width="50%"><img src="docs/screenshots/settings.png" alt="Gloss Settings 界面"></td>
+    <td width="50%"><img src="docs/screenshots/triage.png" width="440" alt="Gloss Triage：原文、中文解读与继续追问输入框"></td>
+    <td width="50%"><img src="docs/screenshots/settings.png" width="440" alt="Gloss Settings：账号、学习画像、快捷键、开机启动、主题和代理"></td>
   </tr>
   <tr>
     <td align="center">Triage</td>
