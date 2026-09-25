@@ -461,13 +461,15 @@ mod platform {
         // SAFETY: UI Automation documents this SAFEARRAY as packed doubles in groups of four.
         let values = unsafe { slice::from_raw_parts(data.cast::<f64>(), len) };
         Ok(values
-            .chunks_exact(4)
-            .filter_map(|chunk| {
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter_map(|&[left, top, width, height]| {
                 let rect = SelectionRect {
-                    left: chunk[0],
-                    top: chunk[1],
-                    width: chunk[2],
-                    height: chunk[3],
+                    left,
+                    top,
+                    width,
+                    height,
                 };
                 (rect.left.is_finite()
                     && rect.top.is_finite()
