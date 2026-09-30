@@ -15,6 +15,11 @@ use app_state::{AppState, DEFAULT_SHORTCUT, OverlayState};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::ShortcutState;
 
+#[cfg(target_os = "macos")]
+const DEFAULT_SHORTCUT_TOOLTIP: &str = "Gloss — Control+Option+Shift+T";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_SHORTCUT_TOOLTIP: &str = "Gloss — Ctrl+Alt+Shift+T";
+
 #[tauri::command]
 fn get_overlay_state(state: State<'_, AppState>) -> Result<OverlayState, String> {
     state.overlay_snapshot()
@@ -56,6 +61,9 @@ fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "The Gloss window is unavailable.".to_owned())?;
+    #[cfg(target_os = "macos")]
+    app.show()
+        .map_err(|error| format!("Could not show the Gloss application: {error}"))?;
     window
         .show()
         .and_then(|_| window.set_focus())
@@ -95,6 +103,7 @@ pub fn run() {
             app.state::<AppState>()
                 .set_data_dir(data_dir)
                 .map_err(std::io::Error::other)?;
+            overlay::configure_app(app.handle()).map_err(std::io::Error::other)?;
             settings::load_and_activate(app.handle(), &app.state::<AppState>());
             let settings_item =
                 tauri::menu::MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
@@ -103,7 +112,15 @@ pub fn run() {
             let tray_menu = tauri::menu::Menu::with_items(app, &[&settings_item, &quit_item])?;
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .menu(&tray_menu)
-                .tooltip("Gloss — Ctrl+Alt+Shift+T");
+                .tooltip(DEFAULT_SHORTCUT_TOOLTIP);
+            // A separate alpha mask lets macOS choose the menu bar foreground color.
+            #[cfg(target_os = "macos")]
+            {
+                tray = tray
+                    .icon(tauri::include_image!("icons/tray-template.png"))
+                    .icon_as_template(true);
+            }
+            #[cfg(not(target_os = "macos"))]
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
@@ -146,7 +163,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 diagnostics::record("native close requested; hiding overlay");
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = overlay::hide(window.app_handle());
             }
         })
         .run(tauri::generate_context!())

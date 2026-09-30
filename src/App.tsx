@@ -42,6 +42,7 @@ type Session = { sessionId: string; action: Action; selectedText: string; messag
 type SessionSummary = { sessionId: string; action: Action; preview: string; updatedAt: string };
 type SettingsValue = { shortcut: string; theme: Theme; proxyUrl: string; launchAtStartup: boolean };
 type SettingsSaveState = { status: "idle" | "saving" | "saved" } | { status: "error"; message: string };
+type CopyStatus = "idle" | "copied" | "failed";
 type AuthStatus = { status: "signed_out" } | { status: "connected"; expiresAtMs: number } | { status: "error"; message: string };
 type ProfileEstimate = { level: CefrLevel; confidence: number; rationale: string };
 type ProfileDimension = { dimension: ProfileDimensionName; level: CefrLevel; confidence: number; evidence: string; updatedAt: string };
@@ -105,7 +106,7 @@ function App() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [notice, setNotice] = useState("");
   const settingsSaveGeneration = useRef(0);
 
@@ -335,8 +336,13 @@ function App() {
   async function copyAnswer() {
     const text = streamText || lastAnswer;
     if (!text) return;
-    await navigator.clipboard.writeText(text);
-    setCopied(true); window.setTimeout(() => setCopied(false), 1400);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+    window.setTimeout(() => setCopyStatus("idle"), 1400);
   }
   function close() { if (isTauri) invoke("hide_overlay").catch(() => undefined); }
 
@@ -349,9 +355,9 @@ function App() {
           <CardHeader mode={mode} action={session?.action ?? pendingAction} onBack={returnToToolbar} onHistory={showHistory} onSettings={showSettings} onClose={close} />
           {mode === "signin" && <SignInPanel onSignIn={signIn} error={error} notice={notice} />}
           {mode === "history" && <HistoryPanel items={history} error={error} onOpen={openHistory} onDelete={removeHistory} />}
-          {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error} saveState={settingsSaveState} onChange={setDraftSettings} onProfile={showProfile} onSignIn={signIn} onSignOut={signOut} />}
+          {mode === "settings" && <SettingsPanel value={draftSettings} auth={auth} error={error ?? captureError} saveState={settingsSaveState} onChange={setDraftSettings} onProfile={showProfile} onSignIn={signIn} onSignOut={signOut} />}
           {mode === "profile" && <ProfilePanel value={profile} loading={profileLoading} error={profileError} />}
-          {mode === "card" && <ResultPanel session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copied={copied} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onGotIt={markGotIt} onRetry={retry} onCopy={copyAnswer} />}
+          {mode === "card" && <ResultPanel session={session} selection={selection} streamText={streamText} busy={busy} error={error} question={question} copyStatus={copyStatus} onQuestionChange={setQuestion} onQuestionSubmit={submitQuestion} onExplainSelection={explainSelection} onGotIt={markGotIt} onRetry={retry} onCopy={copyAnswer} />}
           <div className="sr-status" role="status" aria-live="polite">{notice || (busy ? "Gloss is thinking" : error ?? "")}</div>
         </section>
       )}
@@ -449,8 +455,8 @@ function Toolbar({ selection, error, action, onChooseAction, onAction, onHistory
     <div className={`toolbar-frame menu-${menuPlacement}${menuOpen ? " is-menu-open" : ""}`}>
       <section className="toolbar" aria-label="Text actions" onMouseDown={startToolbarDrag}>
         <button className="toolbar-mark" aria-label="Open history" onClick={onHistory}><img src={glossLogo} alt="" /></button>
-        <p className={error ? "toolbar-error" : "selection-peek"}>{error ? "No readable selection" : selection?.text || "Selected text"}</p>
-        <div className="toolbar-actions">
+        {error ? <button className="toolbar-error" type="button" onClick={onSettings} title={error} aria-label={`Selection capture failed: ${error} View details in Settings.`}><span>{error}</span><ChevronRight size={14} aria-hidden="true" /></button> : <p className="selection-peek">{selection?.text || "Selected text"}</p>}
+        {!error && <div className="toolbar-actions">
           <div className="action-split" role="group" aria-label="Text action">
             <button className="action-run" onClick={() => onAction(action)} disabled={!selection} aria-label={`Run ${current.label}`}><ActionIcon action={action} size={16} /><span>{current.label}</span></button>
             <button ref={triggerRef} className="action-picker" type="button" data-no-drag aria-label="Choose text action" aria-haspopup="menu" aria-expanded={menuOpen} aria-controls="action-menu" onClick={() => menuOpen ? closeMenu(false) : void openMenu()} onKeyDown={handleTriggerKeyDown}>
@@ -464,7 +470,7 @@ function Toolbar({ selection, error, action, onChooseAction, onAction, onHistory
               </button>)}
             </div>}
           </div>
-        </div>
+        </div>}
         <button className="icon-button compact" aria-label="Open settings" onClick={onSettings}><Settings size={15} /></button>
         <button className="icon-button compact" aria-label="Close Gloss" onClick={onClose}><X size={15} /></button>
       </section>
@@ -489,11 +495,11 @@ function CardHeader({ mode, action, onBack, onHistory, onSettings, onClose }: { 
 }
 
 type ReadingSelection = { text: string; range: Range; left: number; top: number; placement: "above" | "below" };
-type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copied: boolean; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onExplainSelection: (selectedText: string) => void; onGotIt: (selectedText: string) => Promise<void>; onRetry: () => void; onCopy: () => void };
+type ResultProps = { session: Session | null; selection: Selection | null; streamText: string; busy: boolean; error: string | null; question: string; copyStatus: CopyStatus; onQuestionChange: (value: string) => void; onQuestionSubmit: (event: FormEvent) => void; onExplainSelection: (selectedText: string) => void; onGotIt: (selectedText: string) => Promise<void>; onRetry: () => void; onCopy: () => void };
 const STREAM_END_TOLERANCE = 2;
 const SELECTION_POPOVER_HALF_WIDTH = 112;
 
-function ResultPanel({ session, selection, streamText, busy, error, question, copied, onQuestionChange, onQuestionSubmit, onExplainSelection, onGotIt, onRetry, onCopy }: ResultProps) {
+function ResultPanel({ session, selection, streamText, busy, error, question, copyStatus, onQuestionChange, onQuestionSubmit, onExplainSelection, onGotIt, onRetry, onCopy }: ResultProps) {
   const scrollElement = useRef<HTMLDivElement | null>(null);
   const followsStream = useRef(true);
   const popover = useRef<HTMLDivElement | null>(null);
@@ -628,7 +634,7 @@ function ResultPanel({ session, selection, streamText, busy, error, question, co
       <button className="selection-action" type="button" onClick={markReadingSelectionGotIt}><Check size={14} aria-hidden="true" /> Got it</button>
     </div>}
     {(hasAnswer || error) && <footer className="result-footer">
-      <div className="answer-tools"><button className="icon-button" onClick={onCopy} aria-label="Copy latest answer">{copied ? <Check size={16} /> : <Copy size={16} />}</button><span>{copied ? "Copied" : busy ? "Writing…" : "Response complete"}</span></div>
+      <div className="answer-tools"><button className="icon-button" onClick={onCopy} aria-label="Copy latest answer">{copyStatus === "copied" ? <Check size={16} /> : <Copy size={16} />}</button><span>{copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : busy ? "Writing…" : "Response complete"}</span></div>
       {session?.action === "triage" && <form className="follow-up" onSubmit={onQuestionSubmit}><label htmlFor="follow-up" className="sr-only">Ask a follow-up</label><input id="follow-up" value={question} onChange={(event) => onQuestionChange(event.currentTarget.value)} placeholder="Ask about this text…" disabled={busy} autoComplete="off" /><button type="submit" aria-label="Send follow-up" disabled={busy || !question.trim()}><Send size={16} /></button></form>}
     </footer>}
   </>;
@@ -808,7 +814,7 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onS
     event.preventDefault();
     if (["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
     const modifiers = [event.ctrlKey && "ctrl", event.altKey && "alt", event.shiftKey && "shift", event.metaKey && "super"].filter(Boolean);
-    const key = normalizeKey(event.key);
+    const key = isMacOS() && event.altKey ? normalizeCode(event.code) || normalizeKey(event.key) : normalizeKey(event.key);
     if (modifiers.length && key) onChange({ ...value, shortcut: [...modifiers, key].join("+") });
   }
   function updateProxy(proxyUrl: string) {
@@ -817,6 +823,7 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onS
   const connectionLabel = auth.status === "connected" ? "Connected" : auth.status === "error" ? "Connection failed" : "Not connected";
   const proxyError = saveState.status === "error" ? validateProxy(value.proxyUrl) : "";
   return <div className="panel-scroll settings-panel">
+    {error && <p className="panel-error" role="alert">{error}</p>}
     <div className="settings-fields">
       <div className="setting-field setting-field-inline account-setting"><span className="account-copy"><strong className="setting-label">ChatGPT</strong><span className={`connection-status is-${auth.status}`}><i aria-hidden="true" />{connectionLabel}</span></span><button className="text-button" type="button" onClick={auth.status === "connected" ? onSignOut : onSignIn}>{auth.status === "connected" ? <><LogOut size={15} /> Sign out</> : <><LogIn size={15} /> Sign in</>}</button></div>
       <button className="profile-setting-link" type="button" onClick={onProfile}><strong className="setting-label">学习画像</strong><ChevronRight size={16} aria-hidden="true" /></button>
@@ -826,7 +833,6 @@ function SettingsPanel({ value, auth, error, saveState, onChange, onProfile, onS
       <label className="setting-field" htmlFor="proxy-url"><strong className="setting-label">Proxy</strong><input id="proxy-url" name="proxy" className="network-input" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="127.0.0.1:23458" value={value.proxyUrl} onChange={(event) => updateProxy(event.target.value)} aria-invalid={proxyError ? true : undefined} aria-describedby={proxyError ? "proxy-error" : undefined} />{proxyError && <small id="proxy-error" className="field-error">{proxyError}</small>}</label>
     </div>
     <div className="settings-save-status" role="status" aria-live="polite">{saveState.status === "saving" ? <span className="is-saving"><i aria-hidden="true" />Saving…</span> : saveState.status === "saved" ? <span><Check size={13} aria-hidden="true" />Saved</span> : saveState.status === "error" ? <span className="is-error">{saveState.message}</span> : null}</div>
-    {error && <p className="panel-error">{error}</p>}
   </div>;
 }
 
@@ -843,8 +849,10 @@ function cefrDescription(level: CefrLevel) { const descriptions: Record<CefrLeve
 function confidenceLabel(confidence: number) { return `置信度 ${Math.round(confidence * 100)}%`; }
 function conversationLabel(count: number) { return `基于 ${count} 次对话`; }
 function profileDimensionLabel(dimension: ProfileDimensionName) { return PROFILE_DIMENSIONS.find((item) => item.value === dimension)?.label ?? dimension; }
-function displayShortcut(value: string) { const names: Record<string, string> = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", super: "Win" }; return value.split("+").map((part) => names[part] ?? part.toUpperCase()).join(" + "); }
+function displayShortcut(value: string) { const names: Record<string, string> = isMacOS() ? { ctrl: "Control", alt: "Option", shift: "Shift", super: "Command" } : { ctrl: "Ctrl", alt: "Alt", shift: "Shift", super: "Win" }; return value.split("+").map((part) => names[part] ?? part.toUpperCase()).join(" + "); }
 function normalizeKey(key: string) { if (key === " ") return "space"; if (key === "Escape") return "esc"; if (key.length === 1 && /[a-z0-9]/i.test(key)) return key.toLowerCase(); if (/^F\d{1,2}$/i.test(key)) return key.toLowerCase(); const named: Record<string, string> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete", Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown" }; return named[key] ?? ""; }
+function normalizeCode(code: string) { if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase(); if (/^Digit[0-9]$/.test(code)) return code.slice(5); return ""; }
+function isMacOS() { return /Mac|iPhone|iPad|iPod/.test(navigator.platform); }
 function validateProxy(value: string) {
   const raw = value.trim();
   if (!raw) return "";
