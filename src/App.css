@@ -81,7 +81,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--focus-ring)
 .toolbar-mark:active { transform: scale(.95); }
 .toolbar-mark img, .brand-glyph img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .selection-peek, .toolbar-error { min-width: 0; flex: 1; margin: 0; color: var(--text-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.toolbar-error { color: var(--danger); }
+.toolbar-error { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--danger); text-align: start; white-space: normal; }
+.toolbar-error:hover { background: var(--surface-muted); }
+.toolbar-error span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 16px; }
+.toolbar-error svg { flex: 0 0 auto; }
 .toolbar-actions { position: relative; flex: 0 0 auto; display: flex; margin-inline: 4px; }
 .action-split { height: 36px; display: flex; align-items: stretch; border-radius: 11px; background: var(--text); color: var(--surface-solid); }
 .action-run { min-width: 80px; padding: 0 10px; border: 0; border-radius: 0; border-start-start-radius: 11px; border-end-start-radius: 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: inherit; font-size: 12.5px; font-weight: 600; transition: background-color 130ms ease, transform 130ms ease; }

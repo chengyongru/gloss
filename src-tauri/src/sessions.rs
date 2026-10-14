@@ -2,14 +2,16 @@ use crate::prompts;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::ffi::OsStr;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 use std::{
-    ffi::OsStr,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
-    os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+#[cfg(windows)]
 use windows::{
     Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW},
     core::PCWSTR,
@@ -525,6 +527,14 @@ fn write_record(target: &mut Vec<u8>, record: &PersistedRecord) -> Result<(), St
 }
 
 pub(crate) fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), String> {
+    atomic_write_with_commit(path, payload, commit_atomic_replace)
+}
+
+fn atomic_write_with_commit(
+    path: &Path,
+    payload: &[u8],
+    commit: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "The history path has no parent folder.".to_owned())?;
@@ -541,17 +551,7 @@ pub(crate) fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), String> {
             .map_err(|error| format!("Could not save the history item: {error}"))?;
         drop(file);
 
-        let from = wide_path(&temp);
-        let to = wide_path(path);
-        // SAFETY: both UTF-16 paths are NUL-terminated and point to files in the same folder.
-        unsafe {
-            MoveFileExW(
-                PCWSTR(from.as_ptr()),
-                PCWSTR(to.as_ptr()),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        }
-        .map_err(|error| format!("Could not commit the history item: {error}"))
+        commit(&temp, path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
@@ -559,6 +559,27 @@ pub(crate) fn atomic_write(path: &Path, payload: &[u8]) -> Result<(), String> {
     result
 }
 
+#[cfg(windows)]
+fn commit_atomic_replace(from: &Path, to: &Path) -> Result<(), String> {
+    let from = wide_path(from);
+    let to = wide_path(to);
+    // SAFETY: both UTF-16 paths are NUL-terminated and point to files in the same folder.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from.as_ptr()),
+            PCWSTR(to.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| format!("Could not commit the history item: {error}"))
+}
+
+#[cfg(not(windows))]
+fn commit_atomic_replace(from: &Path, to: &Path) -> Result<(), String> {
+    fs::rename(from, to).map_err(|error| format!("Could not commit the history item: {error}"))
+}
+
+#[cfg(windows)]
 fn wide_path(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
@@ -584,6 +605,50 @@ fn compact_preview(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("gloss-test-{}", Uuid::new_v4()))
+    }
+
+    fn temp_files(path: &Path) -> Vec<PathBuf> {
+        fs::read_dir(path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn atomic_write_replaces_an_existing_file() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, b"old settings").unwrap();
+
+        atomic_write(&path, b"new settings").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new settings");
+        assert!(temp_files(&dir).is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_cleans_up_after_commit_failure_and_preserves_original() {
+        let dir = test_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("oauth-token.json");
+        fs::write(&path, b"original token").unwrap();
+
+        let result = atomic_write_with_commit(&path, b"replacement token", |_, _| {
+            Err("simulated commit failure".to_owned())
+        });
+
+        assert_eq!(result.unwrap_err(), "simulated commit failure");
+        assert_eq!(fs::read(&path).unwrap(), b"original token");
+        assert!(temp_files(&dir).is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn request_contains_only_conversation_messages_as_input() {
